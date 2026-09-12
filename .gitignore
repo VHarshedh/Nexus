@@ -1,0 +1,83 @@
+# ──────────────────────────────────────────────
+# Python & Bytecode
+# ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ──────────────────────────────────────────────
+# Virtual Environments
+# ──────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ──────────────────────────────────────────────
+# Environment variables & secrets
+# ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ──────────────────────────────────────────────
+# AI Assistant local configs & API tokens
+# ──────────────────────────────────────────────
+.claude/
+.gemini/
+
+# ──────────────────────────────────────────────
+# Dynamic uploads & Data
+# ──────────────────────────────────────────────
+uploads/*
+!uploads/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+data/
+downloads/
+*.sqlite3
+*.db
+
+# ──────────────────────────────────────────────
+# Testing, Coverage & Linters
+# ──────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# ──────────────────────────────────────────────
+# Frontend & Node (if added to workspace)
+# ──────────────────────────────────────────────
+node_modules/
+.next/
+dist/
+build/
+*.egg-info/
+
+# ──────────────────────────────────────────────
+# Logs & IDEs
+# ──────────────────────────────────────────────
+*.log
+logs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ──────────────────────────────────────────────
+# OS Files
+# ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
