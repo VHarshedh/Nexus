@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/briefings", tags=["briefings"])
 
 
+# Maintain _run_async_pipeline alias for test monkeypatch compatibility
+_run_async_pipeline = run_briefing_pipeline
+
+
 # ---------------------------------------------------------------------------
 # Generate Briefing (non-blocking)
 # ---------------------------------------------------------------------------
@@ -58,7 +62,7 @@ async def generate_briefing(
     # Launch the async background pipeline directly on the main event loop.
     # It instantiates its own independent DB session via get_session()
     # so it does not depend on the request-scoped session.
-    background_tasks.add_task(run_briefing_pipeline, job_id)
+    background_tasks.add_task(_run_async_pipeline, job_id)
 
     return BriefingCreateResponse(
         job_id=job_id,

@@ -257,10 +257,11 @@ async def synthesize_video_did(script: str) -> str | None:
     Returns the public video URL on success, or None on failure.
     """
     settings = get_settings()
-    if not settings.did_api_key:
+    did_key = getattr(settings, "did_api_key", "")
+    if not did_key:
         return None
 
-    raw_key = settings.did_api_key.strip()
+    raw_key = did_key.strip()
     if ":" in raw_key:
         auth_header = f"Basic {base64.b64encode(raw_key.encode()).decode()}"
     elif raw_key.lower().startswith("basic "):
@@ -375,11 +376,11 @@ async def run_briefing_pipeline(job_id: uuid.UUID) -> None:
         media_url: str | None = None
 
         # 1. Try D-ID if key is configured (free trial avatar video)
-        if settings.did_api_key:
+        if getattr(settings, "did_api_key", None):
             media_url = await synthesize_video_did(script)
 
         # 2. Try HeyGen if configured
-        if media_url is None and settings.heygen_api_key:
+        if media_url is None and getattr(settings, "heygen_api_key", None):
             media_url = await synthesize_video_heygen(script)
 
         # 3. Fallback to Edge-TTS (always free, no API key needed)
