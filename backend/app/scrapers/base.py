@@ -18,6 +18,11 @@ from typing import Sequence
 
 from playwright.async_api import Browser, Playwright, async_playwright
 
+from app.scrapers.stealth import (
+    DEFAULT_STEALTH_HEADERS,
+    HumanBehaviorSimulator,
+    StealthEngine,
+)
 from app.scrapers.utils import USER_AGENT
 
 logger = logging.getLogger(__name__)
@@ -64,15 +69,16 @@ class BaseScraper(ABC):
     def __init__(self) -> None:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self.human = HumanBehaviorSimulator()
 
     async def __aenter__(self) -> "BaseScraper":
-        """Launch a headless Chromium browser."""
+        """Launch a headless Chromium browser with anti-detection flags."""
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=StealthEngine.get_launch_args(),
         )
-        logger.info("[%s] Browser launched.", self.name)
+        logger.info("[%s] Stealth browser launched.", self.name)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -89,12 +95,26 @@ class BaseScraper(ABC):
         return self._browser
 
     async def new_page(self):
-        """Create a new browser page with a realistic user-agent."""
+        """Create a new browser page equipped with full anti-detection stealth."""
+        viewport = StealthEngine.get_random_viewport()
         context = await self.browser.new_context(
             user_agent=USER_AGENT,
-            viewport={"width": 1920, "height": 1080},
+            viewport=viewport,
+            extra_http_headers=DEFAULT_STEALTH_HEADERS,
+            locale="en-US",
+            timezone_id="America/New_York",
+            device_scale_factor=1,
+            has_touch=False,
+            is_mobile=False,
+            color_scheme="light",
+            accept_downloads=True,
         )
-        return await context.new_page()
+        await StealthEngine.apply_stealth_to_context(context)
+        page = await context.new_page()
+        await StealthEngine.apply_stealth_to_page(page)
+        # Ensure tab is active and focused (document.hasFocus() === true)
+        await page.bring_to_front()
+        return page
 
     @abstractmethod
     async def scrape(self) -> Sequence[RawListing]:

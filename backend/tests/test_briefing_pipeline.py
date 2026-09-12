@@ -11,7 +11,7 @@ from app.services import briefing
 
 
 @pytest.mark.asyncio
-async def test_pipeline_uses_independent_sessions_and_edge_tts_fallback(monkeypatch):
+async def test_pipeline_uses_independent_sessions_and_edge_tts_fallback(monkeypatch, tmp_path):
     job = SimpleNamespace(
         id=uuid.uuid4(), user_id=uuid.uuid4(), status="queued", script=None,
         media_url=None, error_message=None, completed_at=None,
@@ -38,7 +38,7 @@ async def test_pipeline_uses_independent_sessions_and_edge_tts_fallback(monkeypa
     monkeypatch.setattr(briefing, "get_session", fake_get_session)
     monkeypatch.setattr(briefing, "generate_briefing_script", fake_script)
     monkeypatch.setattr(briefing, "synthesize_audio_edge_tts", fake_tts)
-    monkeypatch.setattr(briefing, "get_settings", lambda: SimpleNamespace(heygen_api_key="", upload_dir=Path(".")))
+    monkeypatch.setattr(briefing, "get_settings", lambda: SimpleNamespace(heygen_api_key="", upload_dir=tmp_path))
     await briefing.run_briefing_pipeline(job.id)
     assert len(sessions) >= 3
     assert job.status == "done"

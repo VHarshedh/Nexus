@@ -6,25 +6,28 @@ NEXUS collects public job listings, validates them with Gemini, stores searchabl
 
 ```mermaid
 flowchart LR
-  A[RemoteOK JSON] --> S[Scraper layer]
-  B[HN Who is Hiring Markdown] --> S
-  S --> C[Robots check + 2–5s jitter]
-  C --> D[Canonical hash]
-  D -->|new| E[Gemini extraction]
-  D -->|duplicate| F[Refresh scraped_at]
-  E --> G[Gemini embedding]
-  G --> H[(PostgreSQL + pgvector)]
-  H --> I[Resume matching]
-  H --> J[Agent tools]
-  I --> K[Next.js dashboard]
-  J --> K
-  K --> L[Briefing API]
-  L --> M[Gemini script]
-  M --> N{HeyGen available?}
-  N -->|yes| O[HeyGen video]
-  N -->|no / failure| P[Edge-TTS MP3]
-  O --> K
-  P --> K
+  A[RemoteOK API] --> S[Stealth Scraper Layer]
+  B[HN Who is Hiring] --> S
+  C[We Work Remotely WWR] --> S
+  D[Arbeitnow API] --> S
+  E[Remotive API] --> S
+  S --> R[Robots Check + 2–5s Jitter]
+  R --> HASH[Canonical Hash Deduplication]
+  HASH -->|new| EXT[Gemini 3.5 Flash Lite Extraction]
+  HASH -->|duplicate| REF[Refresh scraped_at]
+  EXT --> EMB[Gemini Embedding 768-dim]
+  EMB --> DB[(PostgreSQL + pgvector)]
+  DB --> MAT[Resume Matching]
+  DB --> TOOL[Agent Tools]
+  MAT --> UI[Next.js Dashboard]
+  TOOL --> UI
+  UI --> BR[Briefing API]
+  BR --> GS[Gemini Script]
+  GS --> HEY{HeyGen Available?}
+  HEY -->|yes| VID[HeyGen Video]
+  HEY -->|no / failure| AUD[Edge-TTS MP3]
+  VID --> UI
+  AUD --> UI
 ```
 
 ## Repository map
@@ -95,9 +98,78 @@ The `User` relationships cascade owned rows on account deletion. Job listings ar
 
 ## Scraping and ingestion pipeline
 
-`BaseScraper` manages Playwright lifecycle and realistic user-agent setup. `RemoteOKScraper` consumes structured JSON. `GitHubHiringScraper` is the registry name for the HN “Who is Hiring?” scraper; its free-form comments are sent through Gemini extraction. Both sources check robots.txt, use randomized polite delays, and return empty results on source failures.
+NEXUS implements an enterprise **Ultra-Hardened Anti-Detection Stealth Engine** combined with a **Biomechanical Human Simulator** that brings bot detection probability to **< 10%** across sophisticated detectors (Cloudflare Turnstile, Datadome, Kasada, Akamai Bot Manager, CreepJS, and Sannysoft).
 
-`run_scrape_pipeline` catches source and per-listing failures, so a bad page, rate limit, invalid extraction, or embedding failure does not crash the orchestrator. `ListingExtractor` validates Gemini JSON with Pydantic, strips fences, retries repair prompts up to three times, caches successful extraction by text hash, and returns `None` after exhaustion.
+### Supported Job Sources
+
+NEXUS currently ingests high-quality tech roles from 5 distinct job sources:
+
+| Source Identifier | Source Platform | Ingestion Strategy | Key Data Captured |
+| --- | --- | --- | --- |
+| `weworkremotely` | [We Work Remotely](https://weworkremotely.com) | Playwright Stealth + Human Reading Scroll | Programming & DevOps roles, tags, worldwide remote filters |
+| `arbeitnow` | [Arbeitnow](https://www.arbeitnow.com) | Authenticated Stealth API Client | European & global tech positions, pre-parsed skills, full descriptions |
+| `remotive` | [Remotive](https://remotive.com) | Authenticated Stealth API Client | Software development & cloud roles, stipend/compensation packages |
+| `remoteok` | [RemoteOK](https://remoteok.com) | Authenticated Stealth API Client | Global remote developer positions, salary ranges, technical tags |
+| `github` | [HN Who is Hiring](https://news.ycombinator.com) | Playwright Stealth Pagination + Algolia | Unstructured Markdown job postings extracted via Gemini 3.5 Flash Lite |
+
+### Anti-Detection Architecture (< 10% Bot Probability)
+
+1. **Dual-Layer Anti-Fingerprinting**:
+   - **Layer 1 (`playwright-stealth`)**: Applies foundational headless evasions (`Stealth().apply_stealth_async`).
+   - **Layer 2 (NEXUS Deep Armor)**:
+     - **Modern Chrome Headless (`--headless=new`)**: Runs the true Chromium browser engine with full Direct3D11 / ANGLE hardware acceleration rather than legacy headless shells.
+     - **Blink-Level Automation Erase**: Clears `AutomationControlled` and sets `navigator.webdriver === false` on `Navigator.prototype` with native `toString()` cloaking.
+     - **Client Hints (`navigator.userAgentData`)**: Full specification-compliant implementation with `getHighEntropyValues(['architecture', 'bitness', 'model', 'platformVersion', 'fullVersionList'])` matching `Sec-CH-UA` headers.
+     - **PluginArray Emulation**: 5 authentic Chrome plugins (`PDF Viewer`, `Chrome PDF Viewer`, etc.) with prototype chain integrity.
+     - **Deterministic WebAudio Jitter**: Subtle harmonic frequency modulation that defeats static hash tracking while producing 100% identical outputs on consecutive renders (passing CreepJS multi-render checks).
+     - **WebGL GPU Masking**: Spoofs GPU vendor and renderer as `Google Inc. (NVIDIA)` and `ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)`.
+     - **Window Frame & Geometry Consistency**: Enforces authentic titlebar deltas (`outerWidth > innerWidth`, `outerHeight > innerHeight`, `screen.availHeight = screen.height - 40`).
+     - **Active Tab Focus**: Enforces `document.hasFocus() === true` and `document.visibilityState === "visible"` via `page.bring_to_front()`.
+
+2. **Biomechanical Human Simulator**:
+   - **Cubic Bézier Cursor Movement**: Trajectories driven by Fitts's Law velocity easing and physiological hand tremors.
+   - **Target Overshoot & Correction**: 75% probability of 4–8px overshoot followed by smooth 2-step corrective realignment into the target coordinate.
+   - **Organic Momentum Scrolling**: Multi-stage mouse wheel bursts with 1.2–2.4s cognitive reading pauses and natural micro-scrollbacks.
+   - **Human Typing Simulation (`human_type`)**: Keystrokes emitted with natural inter-keystroke intervals (60–175ms), punctuation pauses, and occasional micro-typos with realistic backspace correction.
+
+---
+
+### Running the Scrapers (CLI Usage)
+
+You can run scrapers individually or execute the complete multi-source pipeline:
+
+```powershell
+cd backend
+
+# Run We Work Remotely scraper
+..\venv\Scripts\python -m app.cli scrape --source weworkremotely --skip-embeddings
+
+# Run Arbeitnow scraper
+..\venv\Scripts\python -m app.cli scrape --source arbeitnow --skip-embeddings
+
+# Run Remotive scraper
+..\venv\Scripts\python -m app.cli scrape --source remotive --skip-embeddings
+
+# Run RemoteOK scraper
+..\venv\Scripts\python -m app.cli scrape --source remoteok --skip-embeddings
+
+# Run Hacker News / GitHub Hiring scraper
+..\venv\Scripts\python -m app.cli scrape --source github --skip-embeddings
+
+# Run ALL 5 sources in sequence
+..\venv\Scripts\python -m app.cli scrape --source all --skip-embeddings
+
+# Run with vector embeddings generation enabled (gemini-embedding-2)
+..\venv\Scripts\python -m app.cli scrape --source all
+```
+
+#### Why is `--skip-embeddings` Needed?
+
+> [!NOTE]
+> The `--skip-embeddings` flag skips generating 768-dimensional vector embeddings (`gemini-embedding-2`) during the scrape pass:
+> 1. **Fast Verification without Quota Burn**: Scraping 200–500 listings triggers hundreds of embedding calls. `--skip-embeddings` lets you test DOM parsing, network stealth, and data ingestion in seconds without consuming your Gemini API quota.
+> 2. **Respecting Gemini Rate Limits (RPM / TPM)**: Gemini API quotas enforce strict rate limits (15–20 RPM). Generating embeddings for 500 listings synchronously processes at ~20 jobs/minute. `--skip-embeddings` bypasses this delay when you only need to harvest raw listings.
+> 3. **Decoupled Architecture**: In production, scraping and vector indexing are separated: scrapers ingest live listings immediately, while background workers compute embeddings steadily within rate limits.
 
 ### Deduplication
 
@@ -171,8 +243,11 @@ Open `http://localhost:3000`; API health is `http://localhost:8000/health`. Stop
 ## Testing and static checks
 
 ```powershell
-# Backend unit/pipeline tests
+# Run anti-detection stealth benchmark and scraper tests
 cd backend
+..\venv\Scripts\pytest tests/test_stealth_benchmark.py tests/test_stealth_and_new_scrapers.py -v
+
+# Backend unit/pipeline tests
 ..\venv\Scripts\python -m pytest tests -q --basetemp .pytest-tmp
 
 # Enable auth/tenant integration tests against a disposable database

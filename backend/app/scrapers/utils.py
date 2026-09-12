@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import random
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -94,8 +94,12 @@ async def is_allowed_by_robots(base_url: str, path: str = "/") -> bool:
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
 
     try:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/plain,text/html,*/*",
+        }
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(robots_url, follow_redirects=True)
+            resp = await client.get(robots_url, headers=headers, follow_redirects=True)
             if resp.status_code != 200:
                 logger.warning(
                     "robots.txt returned %s for %s — assuming allowed.",
@@ -140,10 +144,31 @@ async def polite_delay() -> None:
     await asyncio.sleep(delay)
 
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0.0.0 Safari/537.36 "
-    "NexusCareerBot/1.0 (+https://github.com/nexus-career-agent)"
-)
+# ─── Authentic Browser Profiles ──────────────────────────────────────────────
+# Modern desktop Chrome profiles (Windows 10/11 x64, Chrome 131/132/133)
+# Completely free of bot tokens to prevent immediate WAF / Cloudflare flagging.
+AUTHENTIC_USER_AGENTS: list[str] = [
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/133.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/132.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+]
+
+# Canonical default user-agent for consistent sessions
+USER_AGENT: str = AUTHENTIC_USER_AGENTS[0]
+
+
+def get_random_user_agent() -> str:
+    """Return a randomly selected modern desktop Chrome User-Agent."""
+    return random.choice(AUTHENTIC_USER_AGENTS)

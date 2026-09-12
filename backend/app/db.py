@@ -36,6 +36,10 @@ def _get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = get_settings()
+        if not settings.database_url:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Please define it in your .env file."
+            )
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.log_level == "DEBUG",
@@ -110,6 +114,16 @@ async def init_db() -> None:
         logger.info("pgvector extension ready.")
         await conn.run_sync(Base.metadata.create_all)
         logger.info("All tables created / verified.")
+
+async def drop_db() -> None:
+    """Drop all tables in the database."""
+    from app.models import Base
+
+    engine = _get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        logger.info("All tables dropped successfully.")
+    await dispose_engine()
 
 
 async def dispose_engine() -> None:

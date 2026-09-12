@@ -23,9 +23,11 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 from google import genai
@@ -37,6 +39,32 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+_MAX_INPUT_CHARS = 6000  # Truncate raw input to avoid token spikes
+_INITIAL_BACKOFF = 6.0   # seconds
+
+
+class AsyncRateLimiter:
+    """
+    Rate limiter to strictly respect Gemini 3.5 Flash Lite quota (15 RPM limit).
+    Default: 12 requests per minute (1 request every 5.0s).
+    """
+
+    def __init__(self, requests_per_minute: float = 12.0):
+        self.interval = 60.0 / requests_per_minute
+        self.last_call = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_call
+            if elapsed < self.interval:
+                sleep_needed = self.interval - elapsed
+                await asyncio.sleep(sleep_needed)
+            self.last_call = time.monotonic()
+
+
+_extractor_limiter = AsyncRateLimiter(requests_per_minute=12.0)
 
 
 # ─── Pydantic Schema for Extracted Listings ──────────────────────────────────
@@ -44,12 +72,12 @@ class ExtractedListing(BaseModel):
     """
     Validated schema for a job listing extracted by the LLM.
 
-    Every field is nullable or has a default so that partial extractions
-    don't crash the pipeline.
+    Every field is nullable with defaults so that incomplete postings or
+    conversational forum comments do not trigger validation crashes.
     """
 
-    title: str = Field(..., description="Job title")
-    company: str = Field(..., description="Company or organisation name")
+    title: str | None = Field(None, description="Job title")
+    company: str | None = Field(None, description="Company or organisation name")
     location: str | None = Field(None, description="City / region / 'Remote'")
     remote_ok: bool = Field(False, description="Whether the role is remote-friendly")
     stipend: str | None = Field(None, description="Salary, stipend, or compensation info")
@@ -70,8 +98,8 @@ extract structured information and return it as a JSON object matching this
 exact schema:
 
 {
-  "title": "<string>",
-  "company": "<string>",
+  "title": "<string or null>",
+  "company": "<string or null>",
   "location": "<string or null>",
   "remote_ok": <true|false>,
   "stipend": "<string or null>",
@@ -82,11 +110,10 @@ exact schema:
 
 Rules:
 - Return ONLY the JSON object, no markdown fences, no commentary.
-- If a field is not mentioned in the text, use null (or false for booleans,
-  or [] for lists).
+- If the text is NOT a job listing (e.g. a general question, discussion, or announcement), set title and company to null.
+- If a field is not mentioned in the text, use null (or false for booleans, or [] for lists).
 - For "required_skills", list individual technologies / languages / tools.
-- For "experience_level", normalise to one of: intern, junior, mid, senior,
-  lead, or manager.  If unclear, use null.
+- For "experience_level", normalise to one of: intern, junior, mid, senior, lead, or manager. If unclear, use null.
 - "stipend" should include the original currency and range if given.
 """
 
@@ -112,7 +139,7 @@ class ListingExtractor:
         # deployment has no Gemini key, and lets extract() turn that into a
         # normal failed record instead of a process-startup exception.
         self._client: genai.Client | None = None
-        self._model = "gemini-2.0-flash"
+        self._model = "gemini-3.5-flash-lite"
         self._cache: dict[str, ExtractedListing] = {}
 
     @staticmethod
@@ -139,11 +166,14 @@ class ListingExtractor:
             return self._cache[text_hash]
 
         # ── Initial extraction call ──────────────────────────────────────
+        # Clean and truncate raw text to protect against excessive token consumption
+        truncated_text = raw_text[:_MAX_INPUT_CHARS].strip()
+
         messages: list[types.Content] = [
             types.Content(
                 role="user",
                 parts=[types.Part.from_text(
-                    text=f"Extract structured job data from this listing:\n\n{raw_text}"
+                    text=f"Extract structured job data from this listing:\n\n{truncated_text}"
                 )],
             )
         ]
@@ -151,6 +181,9 @@ class ListingExtractor:
         last_error: str = ""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # Enforce safe rate pacing (max 12 RPM < 15 RPM limit)
+                await _extractor_limiter.acquire()
+
                 if self._client is None:
                     settings = get_settings()
                     self._client = genai.Client(api_key=settings.gemini_api_key)
@@ -200,6 +233,17 @@ class ListingExtractor:
                 # ── Validate with Pydantic ───────────────────────────────
                 result = ExtractedListing.model_validate(parsed)
 
+                # If neither title nor company exists, it is a non-job comment / discussion
+                if not result.title and not result.company:
+                    logger.info(
+                        "[extractor] Text does not appear to be a job posting (no title/company) — skipping."
+                    )
+                    return None
+
+                # Provide clean fallback strings if only one field was omitted
+                if not result.company:
+                    result.company = "Undisclosed / Stealth"
+
                 # ── Cache and return ─────────────────────────────────────
                 self._cache[text_hash] = result
                 logger.info(
@@ -221,6 +265,18 @@ class ListingExtractor:
                     attempt, MAX_RETRIES, last_error,
                 )
             except Exception as exc:
+                err_str = str(exc)
+                is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+                if is_rate_limit and attempt < MAX_RETRIES:
+                    backoff = _INITIAL_BACKOFF * (2 ** (attempt - 1))
+                    logger.warning(
+                        "[extractor] Rate limit reached (429). Backing off for %.1fs (attempt %d/%d)...",
+                        backoff, attempt, MAX_RETRIES,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
                 last_error = f"Unexpected error: {exc}"
                 logger.error(
                     "[extractor] Attempt %d/%d: %s",

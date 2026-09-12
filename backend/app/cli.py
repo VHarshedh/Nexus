@@ -52,7 +52,7 @@ def cli() -> None:
 @click.option(
     "--source", "-s",
     multiple=True,
-    help="Scraper name(s) to run. Omit to run all. (remoteok, github)",
+    help="Scraper name(s) to run. Omit to run all. (remoteok, github, weworkremotely, arbeitnow, remotive)",
 )
 @click.option(
     "--skip-embeddings",
@@ -99,6 +99,40 @@ def init() -> None:
     console.print("[bold cyan]Initialising database...[/bold cyan]")
     asyncio.run(init_db())
     console.print("[bold green]Database initialised successfully.[/bold green]")
+
+
+@db.command()
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt.")
+def drop(yes: bool) -> None:
+    """Drop all database tables."""
+    from app.db import drop_db
+
+    if not yes and not click.confirm("Are you sure you want to drop all tables? This cannot be undone."):
+        console.print("[yellow]Aborted.[/yellow]")
+        return
+    console.print("[bold red]Dropping database tables...[/bold red]")
+    asyncio.run(drop_db())
+    console.print("[bold green]All tables dropped successfully.[/bold green]")
+
+
+@db.command()
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt.")
+def reset(yes: bool) -> None:
+    """Drop all tables and recreate them cleanly."""
+    from app.db import drop_db, init_db
+
+    if not yes and not click.confirm("Are you sure you want to reset the database? All data will be lost."):
+        console.print("[yellow]Aborted.[/yellow]")
+        return
+
+    async def _do_reset() -> None:
+        console.print("[bold red]Dropping database tables...[/bold red]")
+        await drop_db()
+        console.print("[bold cyan]Re-initialising database tables...[/bold cyan]")
+        await init_db()
+
+    asyncio.run(_do_reset())
+    console.print("[bold green]Database reset completed successfully.[/bold green]")
 
 
 @db.command()

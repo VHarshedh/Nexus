@@ -26,6 +26,7 @@ from typing import Sequence
 import httpx
 
 from app.scrapers.base import BaseScraper, RawListing
+from app.scrapers.stealth import get_stealth_api_headers
 from app.scrapers.utils import (
     USER_AGENT,
     is_allowed_by_robots,
@@ -58,14 +59,13 @@ class RemoteOKScraper(BaseScraper):
 
         # ── Fetch JSON ───────────────────────────────────────────────────
         logger.info("[remoteok] Fetching %s …", _API_URL)
+        api_headers = get_stealth_api_headers(referer=f"{_BASE_URL}/")
+        api_headers["User-Agent"] = USER_AGENT
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(
                     _API_URL,
-                    headers={
-                        "User-Agent": USER_AGENT,
-                        "Accept": "application/json",
-                    },
+                    headers=api_headers,
                     follow_redirects=True,
                 )
                 resp.raise_for_status()

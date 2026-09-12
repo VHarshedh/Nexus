@@ -2,7 +2,7 @@
 NEXUS — Embeddings & Semantic Search.
 
 Provides:
-- ``generate_embedding(text)`` — calls Gemini ``text-embedding-004`` to
+- ``generate_embedding(text)`` — calls Gemini ``gemini-embedding-2`` to
   produce a 768-dimension vector.
 - ``generate_embeddings_batch(texts)`` — batch variant for bulk operations.
 - ``find_similar_listings(resume_embedding, session, top_k)`` — executes a
@@ -14,7 +14,9 @@ All functions are async and production-ready with error handling.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Sequence
 
 from google import genai
@@ -26,8 +28,35 @@ from app.models.job_listing import JobListing
 
 logger = logging.getLogger(__name__)
 
-_EMBEDDING_MODEL = "text-embedding-004"
+_EMBEDDING_MODEL = "gemini-embedding-2"
 _EMBEDDING_DIM = 768
+_MAX_TEXT_LENGTH = 2048  # Protects TPM (Tokens Per Minute) limit
+_MAX_RETRIES = 3
+_INITIAL_BACKOFF = 5.0  # seconds
+
+
+class AsyncRateLimiter:
+    """
+    Pacing rate limiter to strictly respect API quotas.
+    Default: 20 requests per minute (1 request every 3.0s).
+    """
+
+    def __init__(self, requests_per_minute: float = 20.0):
+        self.interval = 60.0 / requests_per_minute
+        self.last_call = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_call
+            if elapsed < self.interval:
+                sleep_needed = self.interval - elapsed
+                await asyncio.sleep(sleep_needed)
+            self.last_call = time.monotonic()
+
+
+_rate_limiter = AsyncRateLimiter(requests_per_minute=20.0)
 
 
 def _get_client() -> genai.Client:
@@ -39,36 +68,65 @@ def _get_client() -> genai.Client:
 async def generate_embedding(input_text: str) -> list[float] | None:
     """
     Generate a 768-dimension embedding for *input_text* using Gemini
-    ``text-embedding-004``.
+    ``gemini-embedding-2``.
 
-    Returns ``None`` if the API call fails (logged as an error).
+    Includes:
+    - Text truncation to 2048 chars to protect TPM quotas.
+    - Proactive rate pacing (max 20 RPM).
+    - Exponential backoff retry on 429 RESOURCE_EXHAUSTED.
+
+    Returns ``None`` if all retries fail.
     """
     if not input_text or not input_text.strip():
         logger.warning("[embeddings] Empty text — returning None.")
         return None
 
-    try:
-        client = _get_client()
-        response = await client.aio.models.embed_content(
-            model=_EMBEDDING_MODEL,
-            contents=input_text,
-        )
+    clean_text = input_text[:_MAX_TEXT_LENGTH].strip()
+    client = _get_client()
 
-        if response.embeddings and len(response.embeddings) > 0:
-            vector = response.embeddings[0].values
-            if len(vector) != _EMBEDDING_DIM:
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            # Enforce smooth pacing (stays under 20 RPM)
+            await _rate_limiter.acquire()
+
+            response = await client.aio.models.embed_content(
+                model=_EMBEDDING_MODEL,
+                contents=clean_text,
+                config=dict(output_dimensionality=_EMBEDDING_DIM),
+            )
+
+            if response.embeddings and len(response.embeddings) > 0:
+                vector = response.embeddings[0].values
+                if len(vector) != _EMBEDDING_DIM:
+                    logger.warning(
+                        "[embeddings] Expected %d dims, got %d.",
+                        _EMBEDDING_DIM,
+                        len(vector),
+                    )
+                return list(vector)
+
+            logger.warning("[embeddings] No embeddings returned by API.")
+            return None
+
+        except Exception as exc:
+            err_str = str(exc)
+            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+            if is_rate_limit and attempt < _MAX_RETRIES:
+                backoff = _INITIAL_BACKOFF * (2 ** (attempt - 1))
                 logger.warning(
-                    "[embeddings] Expected %d dims, got %d.",
-                    _EMBEDDING_DIM, len(vector),
+                    "[embeddings] Rate limit reached (429). Backing off for %.1fs (attempt %d/%d)...",
+                    backoff,
+                    attempt,
+                    _MAX_RETRIES,
                 )
-            return list(vector)
+                await asyncio.sleep(backoff)
+                continue
 
-        logger.warning("[embeddings] No embeddings returned by API.")
-        return None
+            logger.error("[embeddings] Embedding generation failed: %s", exc)
+            return None
 
-    except Exception as exc:
-        logger.error("[embeddings] Embedding generation failed: %s", exc)
-        return None
+    return None
 
 
 async def generate_embeddings_batch(

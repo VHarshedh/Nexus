@@ -2,7 +2,7 @@
 NEXUS -- Application Configuration.
 
 Loads settings from environment variables / ``.env`` file using Pydantic
-Settings.  Every knob that changes between environments lives here.
+Settings. Every configuration variable defined in ``.env.example`` is mapped here.
 """
 
 from __future__ import annotations
@@ -12,49 +12,55 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+
 
 class Settings(BaseSettings):
     """Central configuration -- all values can be overridden via env vars."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(_ENV_FILE, ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
-    # -- Database -------------------------------------------------------------
-    database_url: str = "postgresql+asyncpg://nexus:nexus@localhost:5432/nexus"
+    # -- PostgreSQL (asyncpg driver) ------------------------------------------
+    # Loaded directly from .env (DATABASE_URL)
+    database_url: str = ""
 
-    # -- Google Gemini --------------------------------------------------------
+    # -- Google Gemini API ----------------------------------------------------
+    # Loaded directly from .env (GEMINI_API_KEY)
     gemini_api_key: str = ""
 
     # -- JWT Authentication ---------------------------------------------------
-    jwt_secret_key: str = "CHANGE-ME-in-production-use-openssl-rand-hex-32"
+    # Loaded directly from .env (JWT_SECRET_KEY)
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 1440  # 24 hours
+    jwt_expire_minutes: int = 1440
 
-    # -- File Uploads ---------------------------------------------------------
-    upload_dir: Path = Path(__file__).resolve().parent.parent / "uploads"
-    max_resume_upload_bytes: int = 10 * 1024 * 1024
+    # -- Upload limits --------------------------------------------------------
+    max_resume_upload_bytes: int = 10485760  # 10 MB
+    upload_dir: Path = _BACKEND_DIR / "uploads"
 
-    # -- Video Briefing -------------------------------------------------------
-    heygen_api_key: str = ""  # optional; falls back to Edge-TTS if empty
+    # -- HeyGen API (optional -- falls back to Edge-TTS if empty) -------------
+    # Loaded directly from .env (HEYGEN_API_KEY)
+    heygen_api_key: str = ""
 
-    # -- CORS -----------------------------------------------------------------
+    # -- Scraping politeness --------------------------------------------------
+    scrape_delay_min: float = 2.0
+    scrape_delay_max: float = 5.0
+
+    # -- Logging level (DEBUG | INFO | WARNING | ERROR) -----------------------
+    log_level: str = "INFO"
+
+    # -- Paths & CORS Defaults ------------------------------------------------
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-
-    # -- Scraping -------------------------------------------------------------
-    scrape_delay_min: float = 2.0
-    scrape_delay_max: float = 5.0
-
-    # -- Logging --------------------------------------------------------------
-    log_level: str = "INFO"
-
-    # -- Paths ----------------------------------------------------------------
-    project_root: Path = Path(__file__).resolve().parent.parent
+    project_root: Path = _BACKEND_DIR
 
 
 @lru_cache(maxsize=1)

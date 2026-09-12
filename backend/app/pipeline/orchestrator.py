@@ -31,10 +31,13 @@ from app.db import get_session
 from app.models.job_listing import JobListing
 from app.pipeline.embeddings import generate_embedding
 from app.pipeline.extractor import ListingExtractor
+from app.scrapers.arbeitnow import ArbeitnowScraper
 from app.scrapers.base import BaseScraper, RawListing
 from app.scrapers.github_hiring import GitHubHiringScraper
 from app.scrapers.remoteok import RemoteOKScraper
+from app.scrapers.remotive import RemotiveScraper
 from app.scrapers.utils import compute_canonical_hash
+from app.scrapers.weworkremotely import WeWorkRemotelyScraper
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ logger = logging.getLogger(__name__)
 SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
     "remoteok": RemoteOKScraper,
     "github": GitHubHiringScraper,
+    "weworkremotely": WeWorkRemotelyScraper,
+    "arbeitnow": ArbeitnowScraper,
+    "remotive": RemotiveScraper,
 }
 
 
@@ -136,8 +142,12 @@ async def _process_listing(
         existing = result.scalar_one_or_none()
 
         if existing is not None:
-            # Listing already in DB — just update scraped_at
+            # Listing already in DB — update scraped_at
             existing.scraped_at = datetime.now(timezone.utc)
+            if existing.embedding is None and not skip_embeddings:
+                existing.embedding = await generate_embedding(raw.raw_text)
+                if existing.embedding:
+                    logger.info("[*] Backfilled embedding for: %s", raw.source_url)
             logger.debug("Dedup hit: %s — updated scraped_at.", raw.source_url)
             stats["updated"] += 1
             return
