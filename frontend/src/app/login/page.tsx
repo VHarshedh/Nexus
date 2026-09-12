@@ -3,22 +3,31 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { Brain, Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
+import { AlertCircle, Brain, Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AxiosError } from 'axios';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, register } = useAuth();
+  const { user, login, register } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Auto-redirect if already authenticated
+  React.useEffect(() => {
+    if (user) {
+      router.replace('/dashboard');
+    }
+  }, [user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMessage(null);
     try {
       if (isRegister) {
         await register({ email, password });
@@ -27,10 +36,17 @@ export default function LoginPage() {
         await login({ email, password });
         toast.success('Welcome back!');
       }
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
     } catch (err) {
-      const axiosErr = err as AxiosError<{ detail: string }>;
-      const msg = axiosErr.response?.data?.detail || 'Authentication failed';
+      const axiosErr = err as AxiosError<{ detail: string | Array<{ msg: string }> }>;
+      let msg = 'Authentication failed';
+      const detail = axiosErr.response?.data?.detail;
+      if (typeof detail === 'string') {
+        msg = detail;
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        msg = detail.map((d: { msg: string }) => d.msg.replace(/^Value error,\s*/i, '')).join('; ');
+      }
+      setErrorMessage(msg);
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -62,7 +78,10 @@ export default function LoginPage() {
           <div className="flex bg-nexus-surface-2 rounded-lg p-1 mb-6">
             <button
               type="button"
-              onClick={() => setIsRegister(false)}
+              onClick={() => {
+                setIsRegister(false);
+                setErrorMessage(null);
+              }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
                 !isRegister
                   ? 'bg-nexus-accent text-white shadow-sm'
@@ -73,7 +92,10 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => setIsRegister(true)}
+              onClick={() => {
+                setIsRegister(true);
+                setErrorMessage(null);
+              }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
                 isRegister
                   ? 'bg-nexus-accent text-white shadow-sm'
@@ -84,6 +106,21 @@ export default function LoginPage() {
             </button>
           </div>
 
+          {/* Prominent Inline Error Banner */}
+          {errorMessage && (
+            <div className="flex items-start gap-3 p-3.5 mb-5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm animate-in fade-in duration-200">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-400 mt-0.5" />
+              <div className="flex-1 leading-snug">
+                <p className="font-semibold">{errorMessage}</p>
+                <p className="text-xs text-red-400/80 mt-0.5">
+                  {isRegister
+                    ? 'Please review the registration criteria above.'
+                    : 'Please check your email and password and try again.'}
+                </p>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-nexus-text-muted mb-1.5">
@@ -92,7 +129,10 @@ export default function LoginPage() {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errorMessage) setErrorMessage(null);
+                }}
                 className="nexus-input"
                 placeholder="you@example.com"
                 required
@@ -107,10 +147,12 @@ export default function LoginPage() {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
                   className="nexus-input pr-10"
-                  placeholder={isRegister ? 'Min 8 characters' : '••••••••'}
-                  minLength={isRegister ? 8 : undefined}
+                  placeholder={isRegister ? 'Letters, numbers & symbol' : '••••••••'}
                   required
                 />
                 <button
@@ -121,6 +163,11 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
+              {isRegister && (
+                <p className="text-xs text-nexus-text-dim mt-1.5">
+                  Any length &bull; Must include letters, numbers, and at least one symbol
+                </p>
+              )}
             </div>
 
             <button type="submit" disabled={loading} className="nexus-btn-primary w-full justify-center">

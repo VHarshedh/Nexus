@@ -45,14 +45,18 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 });
 
 // ---------------------------------------------------------------------------
-// Response interceptor — redirect on 401
+// Response interceptor — redirect on 401 (only for authenticated session expiry)
 // ---------------------------------------------------------------------------
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (error.response?.status === 401) {
+    // Do NOT reload if the 401 is from login/register endpoints or already on the login page!
+    // Otherwise it will wipe form state, abort toast notifications, and prevent the user
+    // from seeing 'Invalid email or password' error messages.
+    const isAuthEndpoint = error.config?.url?.includes('/api/auth/');
+    if (error.response?.status === 401 && !isAuthEndpoint) {
       clearAuth();
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
     }

@@ -218,25 +218,29 @@ export default function BriefingsPage() {
   });
 
   // Poll active job
-  const { data: activeJob } = useQuery<BriefingJobResponse>({
+  const { data: activeJob, error: activeJobError } = useQuery<BriefingJobResponse>({
     queryKey: ['briefing', activeJobId],
     queryFn: async () => (await api.get(`/api/briefings/${activeJobId}`)).data,
     enabled: !!activeJobId,
+    retry: 1,
     refetchInterval: (query) => {
+      if (query.state.error) return false;
       const status = query.state.data?.status;
       if (status === 'done' || status === 'failed') return false;
       return 3000;
     },
   });
 
-  // Stop polling and refresh list when done/failed
+  // Stop polling and refresh list when done/failed or reset on error
   useEffect(() => {
-    if (activeJob && (activeJob.status === 'done' || activeJob.status === 'failed')) {
+    if (activeJobError) {
+      setActiveJobId(null);
+    } else if (activeJob && (activeJob.status === 'done' || activeJob.status === 'failed')) {
       if (activeJob.status === 'done') toast.success('Briefing ready!');
       if (activeJob.status === 'failed') toast.error('Briefing generation failed.');
       queryClient.invalidateQueries({ queryKey: ['briefings'] });
     }
-  }, [activeJob, queryClient]);
+  }, [activeJob, activeJobError, queryClient]);
 
   const generateMutation = useMutation<BriefingCreateResponse>({
     mutationFn: async () => (await api.post('/api/briefings/generate')).data,
