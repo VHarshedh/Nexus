@@ -21,6 +21,7 @@ completes.  This is critical for correctness.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -48,14 +49,14 @@ async def generate_briefing_script(
     user_id: uuid.UUID,
 ) -> str:
     """Generate a 60-90 second career briefing script from the user's
-    top 3 matched jobs.
+    top 3 matched jobs (or top market listings if no resume matches exist yet).
 
     Uses its own DB session to be safe for background tasks.
     """
     settings = get_settings()
     client = genai.Client(api_key=settings.gemini_api_key)
 
-    # Fetch top 3 matches
+    # Fetch top 3 matches for the user
     async with get_session() as session:
         stmt = (
             select(UserListingMatch, JobListing)
@@ -68,38 +69,70 @@ async def generate_briefing_script(
         rows = result.all()
 
     if not rows:
-        return (
-            "Welcome to your NEXUS career briefing. "
-            "Unfortunately, no job matches were found yet. "
-            "Upload your resume and compute matches to receive "
-            "a personalised briefing. Stay tuned!"
-        )
+        # Fallback to top market listings if the user hasn't matched yet
+        async with get_session() as session:
+            stmt = (
+                select(JobListing)
+                .order_by(JobListing.created_at.desc())
+                .limit(3)
+            )
+            result = await session.execute(stmt)
+            market_jobs = result.scalars().all()
 
-    # Build context for the LLM
-    jobs_context = []
-    for i, (match, listing) in enumerate(rows, 1):
-        jobs_context.append(
-            f"Job {i}: {listing.title} at {listing.company} "
-            f"(Location: {listing.location or 'N/A'}, "
-            f"Remote: {'Yes' if listing.remote_ok else 'No'}, "
-            f"Match Score: {match.match_score:.0%}). "
-            f"Key Skills: {', '.join(listing.required_skills or [])}. "
-            f"Justification: {match.justification or 'N/A'}."
-        )
+        if not market_jobs:
+            return (
+                "Welcome to your NEXUS career briefing. "
+                "Upload your resume and compute matches to receive "
+                "a personalised briefing. Stay tuned!"
+            )
 
-    prompt = (
-        "You are a professional career briefing presenter. "
-        "Write a concise, energetic script for a 60-90 second audio briefing "
-        "that summarises the user's top job matches. "
-        "Use a warm, professional tone. Address the listener directly as 'you'. "
-        "Structure: brief greeting, then cover each job with why it's a great fit, "
-        "end with an encouraging call to action.\n\n"
-        "TOP MATCHED JOBS:\n" + "\n".join(jobs_context) + "\n\n"
-        "Write ONLY the narration script. No stage directions or timestamps."
-    )
+        jobs_context = []
+        for i, listing in enumerate(market_jobs, 1):
+            skills = listing.required_skills if isinstance(listing.required_skills, list) else []
+            jobs_context.append(
+                f"Job {i}: {listing.title} at {listing.company} "
+                f"(Location: {listing.location or 'Remote'}, "
+                f"Remote: {'Yes' if listing.remote_ok else 'No'}). "
+                f"Key Skills: {', '.join(skills)}. "
+                f"Overview: {(listing.raw_text or '')[:180]}."
+            )
+
+        prompt = (
+            "You are a professional career briefing presenter for NEXUS. "
+            "The user has not uploaded a resume yet, so present an energetic 60-second "
+            "overview of top trending opportunities in today's remote tech market. "
+            "Use a warm, professional tone. Address the listener directly as 'you'. "
+            "Highlight each role, and conclude with an encouraging call to action to upload their resume on NEXUS.\n\n"
+            "TRENDING MARKET OPPORTUNITIES:\n" + "\n".join(jobs_context) + "\n\n"
+            "Write ONLY the narration script. No stage directions or timestamps."
+        )
+    else:
+        # Build context for matched jobs
+        jobs_context = []
+        for i, (match, listing) in enumerate(rows, 1):
+            skills = listing.required_skills if isinstance(listing.required_skills, list) else []
+            jobs_context.append(
+                f"Job {i}: {listing.title} at {listing.company} "
+                f"(Location: {listing.location or 'N/A'}, "
+                f"Remote: {'Yes' if listing.remote_ok else 'No'}, "
+                f"Match Score: {match.match_score:.0%}). "
+                f"Key Skills: {', '.join(skills)}. "
+                f"Justification: {match.justification or 'N/A'}."
+            )
+
+        prompt = (
+            "You are a professional career briefing presenter. "
+            "Write a concise, energetic script for a 60-90 second audio briefing "
+            "that summarises the user's top job matches. "
+            "Use a warm, professional tone. Address the listener directly as 'you'. "
+            "Structure: brief greeting, then cover each job with why it's a great fit, "
+            "end with an encouraging call to action.\n\n"
+            "TOP MATCHED JOBS:\n" + "\n".join(jobs_context) + "\n\n"
+            "Write ONLY the narration script. No stage directions or timestamps."
+        )
 
     response = await client.aio.models.generate_content(
-        model="gemini-2.0-flash",
+        model=settings.gemini_model,
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.6,
@@ -216,6 +249,89 @@ async def synthesize_video_heygen(script: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# 2c. D-ID Video Synthesis (Alternative Avatar Video -- Free Trial / Credits)
+# ---------------------------------------------------------------------------
+async def synthesize_video_did(script: str) -> str | None:
+    """Send the script to D-ID Talks API and poll until the video is ready.
+
+    Returns the public video URL on success, or None on failure.
+    """
+    settings = get_settings()
+    if not settings.did_api_key:
+        return None
+
+    raw_key = settings.did_api_key.strip()
+    if ":" in raw_key:
+        auth_header = f"Basic {base64.b64encode(raw_key.encode()).decode()}"
+    elif raw_key.lower().startswith("basic "):
+        auth_header = raw_key
+    else:
+        auth_header = f"Basic {base64.b64encode(f'{raw_key}:'.encode()).decode()}"
+
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "source_url": "https://create-images-results.d-id.com/DefaultPresenters/Emma_f/image.jpeg",
+        "script": {
+            "type": "text",
+            "subtitles": "false",
+            "provider": {
+                "type": "microsoft",
+                "voice_id": "en-US-JennyNeural",
+            },
+            "input": script,
+        },
+        "config": {
+            "fluent": "false",
+            "pad_audio": "0.0",
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.d-id.com/talks",
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            talk_id = data.get("id")
+            if not talk_id:
+                logger.error("[d-id] No talk_id returned: %s", data)
+                return None
+
+            logger.info("[d-id] Video submitted: %s", talk_id)
+
+            for _ in range(60):
+                await asyncio.sleep(5)
+                status_resp = await client.get(
+                    f"https://api.d-id.com/talks/{talk_id}",
+                    headers=headers,
+                )
+                status_data = status_resp.json()
+                talk_status = status_data.get("status")
+
+                if talk_status == "done":
+                    video_url = status_data.get("result_url")
+                    logger.info("[d-id] Video ready: %s", video_url)
+                    return video_url
+                elif talk_status == "error":
+                    logger.error("[d-id] Video generation error: %s", status_data.get("error"))
+                    return None
+
+            logger.error("[d-id] Video generation timed out.")
+            return None
+
+    except Exception as exc:
+        logger.error("[d-id] API error: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 3. Background Pipeline
 # ---------------------------------------------------------------------------
 async def run_briefing_pipeline(job_id: uuid.UUID) -> None:
@@ -243,9 +359,7 @@ async def run_briefing_pipeline(job_id: uuid.UUID) -> None:
         # -- Step 1: Generate script ------------------------------------------
         script = await generate_briefing_script(user_id)
 
-        # Persist a granular, observable stage before network-bound media
-        # work.  The frontend can now accurately distinguish script creation
-        # from HeyGen/Edge-TTS synthesis while polling.
+        # Persist a granular, observable stage before network-bound media work
         async with get_session() as session:
             result = await session.execute(
                 select(BriefingJob).where(BriefingJob.id == job_id)
@@ -260,11 +374,15 @@ async def run_briefing_pipeline(job_id: uuid.UUID) -> None:
         settings = get_settings()
         media_url: str | None = None
 
-        # Try HeyGen first
-        if settings.heygen_api_key:
+        # 1. Try D-ID if key is configured (free trial avatar video)
+        if settings.did_api_key:
+            media_url = await synthesize_video_did(script)
+
+        # 2. Try HeyGen if configured
+        if media_url is None and settings.heygen_api_key:
             media_url = await synthesize_video_heygen(script)
 
-        # Fallback to Edge-TTS
+        # 3. Fallback to Edge-TTS (always free, no API key needed)
         if media_url is None:
             output_dir = settings.upload_dir / str(user_id) / "briefings"
             output_dir.mkdir(parents=True, exist_ok=True)

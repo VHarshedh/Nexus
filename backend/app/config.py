@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # -- Google Gemini API ----------------------------------------------------
     # Loaded directly from .env (GEMINI_API_KEY)
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.5-flash-lite"
 
     # -- JWT Authentication ---------------------------------------------------
     # Loaded directly from .env (JWT_SECRET_KEY)
@@ -47,6 +48,15 @@ class Settings(BaseSettings):
     # -- HeyGen API (optional -- falls back to Edge-TTS if empty) -------------
     # Loaded directly from .env (HEYGEN_API_KEY)
     heygen_api_key: str = ""
+
+    # -- D-ID API (optional free-tier avatar video alternative) ---------------
+    # Loaded directly from .env (DID_API_KEY)
+    did_api_key: str = ""
+
+    # -- Adzuna API (optional free developer keys with mandatory salary data) --
+    # Loaded directly from .env (ADZUNA_APP_ID, ADZUNA_APP_KEY)
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
 
     # -- Scraping politeness --------------------------------------------------
     scrape_delay_min: float = 2.0

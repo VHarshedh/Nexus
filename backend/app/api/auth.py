@@ -17,14 +17,15 @@ that allows overriding the user identity.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,8 +38,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# -- Password hashing --------------------------------------------------------
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# -- Password hashing (Direct bcrypt + SHA-256 pre-hashing) ------------------
+# Pre-hashing with SHA-256 compresses arbitrary-length passwords into a 32-byte
+# digest, completely avoiding bcrypt's 72-byte restriction while retaining full entropy.
+def hash_password(password: str) -> str:
+    """Hash password using SHA-256 pre-hashing + bcrypt."""
+    digest = hashlib.sha256(password.encode("utf-8")).digest()
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(digest, salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against bcrypt hash with SHA-256 and fallback for raw."""
+    try:
+        hashed_bytes = hashed_password.encode("utf-8")
+        # 1. Primary check: SHA-256 pre-hash
+        digest = hashlib.sha256(plain_password.encode("utf-8")).digest()
+        if bcrypt.checkpw(digest, hashed_bytes):
+            return True
+
+        # 2. Backwards-compatibility fallback: raw password if <= 72 bytes
+        raw_bytes = plain_password.encode("utf-8")
+        if len(raw_bytes) <= 72 and bcrypt.checkpw(raw_bytes, hashed_bytes):
+            return True
+    except Exception:
+        return False
+    return False
 
 # -- OAuth2 scheme (tells Swagger UI where to send the token) -----------------
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -118,7 +143,7 @@ async def register(
 
     user = User(
         email=body.email,
-        hashed_password=pwd_context.hash(body.password),
+        hashed_password=hash_password(body.password),
     )
     session.add(user)
     await session.flush()  # populate user.id before commit
@@ -142,7 +167,7 @@ async def login(
     result = await session.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
-    if user is None or not pwd_context.verify(body.password, user.hashed_password):
+    if user is None or not verify_password(body.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",

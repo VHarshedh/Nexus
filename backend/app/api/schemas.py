@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,24 @@ from pydantic import BaseModel, EmailStr, Field
 # ---------------------------------------------------------------------------
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        """Enforce password rules:
+        - Any number of characters allowed (no arbitrary length limits).
+        - Must include alphanumeric characters (both letters and numbers) and at least one symbol.
+        """
+        if not v or not v.strip():
+            raise ValueError("Password cannot be empty.")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must include at least one letter.")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must include at least one number.")
+        if not any(not c.isalnum() and not c.isspace() for c in v):
+            raise ValueError("Password must include at least one symbol (e.g. !@#$%^&*).")
+        return v
 
 
 class LoginRequest(BaseModel):

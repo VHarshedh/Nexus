@@ -31,9 +31,11 @@ from app.db import get_session
 from app.models.job_listing import JobListing
 from app.pipeline.embeddings import generate_embedding
 from app.pipeline.extractor import ListingExtractor
+from app.scrapers.adzuna import AdzunaScraper
 from app.scrapers.arbeitnow import ArbeitnowScraper
 from app.scrapers.base import BaseScraper, RawListing
 from app.scrapers.github_hiring import GitHubHiringScraper
+from app.scrapers.levels_fyi import LevelsFyiScraper
 from app.scrapers.remoteok import RemoteOKScraper
 from app.scrapers.remotive import RemotiveScraper
 from app.scrapers.utils import compute_canonical_hash
@@ -43,7 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Registry of available scrapers
 SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
+    "levels_fyi": LevelsFyiScraper,
     "remoteok": RemoteOKScraper,
+    "adzuna": AdzunaScraper,
     "github": GitHubHiringScraper,
     "weworkremotely": WeWorkRemotelyScraper,
     "arbeitnow": ArbeitnowScraper,

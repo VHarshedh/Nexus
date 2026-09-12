@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job_listing import JobListing
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Tool 1: Query Saved / Matched Listings
+# Tool 1: Query Saved / Matched Listings (with DB market fallback)
 # ---------------------------------------------------------------------------
 async def tool_query_saved_listings(
     user_id: uuid.UUID,
@@ -42,19 +42,8 @@ async def tool_query_saved_listings(
 ) -> dict[str, Any]:
     """Query the user's saved or matched job listings.
 
-    Parameters
-    ----------
-    filter_remote : bool | None
-        If True, return only remote-friendly jobs.
-        If False, return only non-remote jobs.
-        If None, return all.
-    max_deadline : str | None
-        If provided (ISO date string e.g. "2026-10-01"), only return
-        listings whose deadline is on or before this date.
-
-    Returns
-    -------
-    dict with keys: "count", "listings" (list of dicts).
+    If the user has not uploaded a resume or computed matches yet, falls back
+    to returning live opportunities from the ingested database.
     """
     stmt = (
         select(UserListingMatch, JobListing)
@@ -66,9 +55,47 @@ async def tool_query_saved_listings(
     result = await session.execute(stmt)
     rows = result.all()
 
+    # Fallback to general market listings if candidate has 0 matches
+    if not rows:
+        fallback_stmt = select(JobListing).order_by(JobListing.scraped_at.desc()).limit(100)
+        if filter_remote is not None:
+            fallback_stmt = fallback_stmt.where(JobListing.remote_ok == filter_remote)
+        
+        fallback_result = await session.execute(fallback_stmt)
+        all_jobs = fallback_result.scalars().all()
+
+        listings = []
+        for j in all_jobs:
+            listings.append({
+                "title": j.title or "Untitled Role",
+                "company": j.company or "Undisclosed",
+                "location": j.location or "Remote",
+                "remote_ok": j.remote_ok,
+                "stipend": j.stipend or "Not specified",
+                "match_score": None,
+                "justification": "Live market listing from database (Upload resume to compute personal match score)",
+                "saved": False,
+                "status": "unmatched",
+                "deadline": j.deadline,
+                "source_url": j.source_url,
+                "skills": j.required_skills or [],
+            })
+
+        # Sort jobs with disclosed salary first
+        listings.sort(
+            key=lambda x: (x["stipend"] != "Not specified", x["remote_ok"]),
+            reverse=True,
+        )
+
+        return {
+            "count": len(listings[:20]),
+            "is_personal_match": False,
+            "note": "Candidate has not uploaded a resume yet. Showing live listings from the 974 ingested jobs in database.",
+            "listings": listings[:20],
+        }
+
     listings = []
     for match, listing in rows:
-        # Apply optional filters
         if filter_remote is not None and listing.remote_ok != filter_remote:
             continue
 
@@ -79,14 +106,14 @@ async def tool_query_saved_listings(
                 if dl > cutoff:
                     continue
             except ValueError:
-                pass  # unparseable deadline -- include it
+                pass
 
         listings.append({
             "title": listing.title,
             "company": listing.company,
             "location": listing.location,
             "remote_ok": listing.remote_ok,
-            "stipend": listing.stipend,
+            "stipend": listing.stipend or "Not specified",
             "match_score": round(match.match_score, 3),
             "justification": match.justification,
             "saved": match.saved,
@@ -95,23 +122,74 @@ async def tool_query_saved_listings(
             "source_url": listing.source_url,
         })
 
-    return {"count": len(listings), "listings": listings[:20]}
+    return {"count": len(listings), "is_personal_match": True, "listings": listings[:20]}
 
 
 # ---------------------------------------------------------------------------
-# Tool 2: Top Skills Breakdown
+# Tool 2: Search All 970+ Ingested Market Listings
+# ---------------------------------------------------------------------------
+async def tool_search_all_listings(
+    session: AsyncSession,
+    *,
+    query: str | None = None,
+    filter_remote: bool | None = None,
+    high_paying_only: bool | None = None,
+    limit: int = 15,
+) -> dict[str, Any]:
+    """Search across all 970+ ingested job opportunities in PostgreSQL."""
+    stmt = select(JobListing).order_by(JobListing.scraped_at.desc())
+
+    if filter_remote is not None:
+        stmt = stmt.where(JobListing.remote_ok == filter_remote)
+
+    if query:
+        stmt = stmt.where(
+            or_(
+                JobListing.title.ilike(f"%{query}%"),
+                JobListing.company.ilike(f"%{query}%"),
+                JobListing.raw_text.ilike(f"%{query}%"),
+            )
+        )
+
+    result = await session.execute(stmt.limit(100))
+    rows = result.scalars().all()
+
+    listings = []
+    for j in rows:
+        listings.append({
+            "title": j.title or "Untitled Role",
+            "company": j.company or "Undisclosed",
+            "location": j.location or "Remote",
+            "remote_ok": j.remote_ok,
+            "stipend": j.stipend or "Not specified",
+            "skills": j.required_skills or [],
+            "source_name": j.source_name,
+            "source_url": j.source_url,
+            "deadline": j.deadline,
+        })
+
+    # Prioritize listings with disclosed salary if high_paying_only or if query asks for salary/pay
+    if high_paying_only or (query and any(w in query.lower() for w in ["pay", "salary", "stipend", "high"])):
+        listings.sort(
+            key=lambda x: (x["stipend"] != "Not specified", x["remote_ok"]),
+            reverse=True,
+        )
+
+    return {
+        "count": len(listings[:limit]),
+        "total_in_pool": len(listings),
+        "listings": listings[:limit],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 3: Top Skills Breakdown
 # ---------------------------------------------------------------------------
 async def tool_get_top_skills_breakdown(
     user_id: uuid.UUID,
     session: AsyncSession,
 ) -> dict[str, Any]:
-    """Aggregate the most frequently required skills across the user's
-    matched job listings.
-
-    Returns
-    -------
-    dict with keys: "total_matches", "top_skills" (list of {skill, count}).
-    """
+    """Aggregate the most frequently required skills across matches or market."""
     stmt = (
         select(JobListing.required_skills)
         .join(UserListingMatch, UserListingMatch.listing_id == JobListing.id)
@@ -120,6 +198,12 @@ async def tool_get_top_skills_breakdown(
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
+
+    # Fallback to general market skills if no personal matches exist yet
+    if not rows:
+        market_stmt = select(JobListing.required_skills).limit(300)
+        market_res = await session.execute(market_stmt)
+        rows = market_res.scalars().all()
 
     counter: Counter[str] = Counter()
     for skills in rows:
@@ -133,7 +217,7 @@ async def tool_get_top_skills_breakdown(
         for skill, count in counter.most_common(20)
     ]
 
-    return {"total_matches": len(rows), "top_skills": top_skills}
+    return {"total_analyzed": len(rows), "top_skills": top_skills}
 
 
 # ---------------------------------------------------------------------------

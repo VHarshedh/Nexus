@@ -32,22 +32,6 @@ router = APIRouter(prefix="/api/briefings", tags=["briefings"])
 
 
 # ---------------------------------------------------------------------------
-# Helper to run async background task from FastAPI BackgroundTasks
-# ---------------------------------------------------------------------------
-def _run_async_pipeline(job_id: uuid.UUID) -> None:
-    """Wrapper that runs the async pipeline in a new event loop.
-
-    FastAPI's ``BackgroundTasks`` runs callables in a thread-pool, so we
-    need to create a fresh event loop for the async briefing pipeline.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(run_briefing_pipeline(job_id))
-    finally:
-        loop.close()
-
-
-# ---------------------------------------------------------------------------
 # Generate Briefing (non-blocking)
 # ---------------------------------------------------------------------------
 @router.post("/generate", response_model=BriefingCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -65,14 +49,16 @@ async def generate_briefing(
         status="queued",
     )
     session.add(job)
-    await session.flush()
+    await session.commit()
+    await session.refresh(job)
 
     job_id = job.id
     logger.info("[briefings] Queued briefing %s for user %s", job_id, current_user.email)
 
-    # Launch the background pipeline (runs in a thread with its own event loop
-    # and its own DB session -- does NOT depend on the request session).
-    background_tasks.add_task(_run_async_pipeline, job_id)
+    # Launch the async background pipeline directly on the main event loop.
+    # It instantiates its own independent DB session via get_session()
+    # so it does not depend on the request-scoped session.
+    background_tasks.add_task(run_briefing_pipeline, job_id)
 
     return BriefingCreateResponse(
         job_id=job_id,

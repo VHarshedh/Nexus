@@ -31,6 +31,7 @@ from app.agent.tools import (
     tool_get_deadline_alerts,
     tool_get_top_skills_breakdown,
     tool_query_saved_listings,
+    tool_search_all_listings,
 )
 from app.config import get_settings
 
@@ -42,19 +43,18 @@ MAX_TOOL_ROUNDS = 10
 # System Prompt
 # ---------------------------------------------------------------------------
 _SYSTEM_PROMPT = """\
-You are NEXUS, an autonomous career intelligence agent.  You help users
-understand their job market position by analysing their matched job listings.
+You are NEXUS, an autonomous career intelligence agent. You have direct, live access to PostgreSQL containing 970+ ingested tech and remote job listings across We Work Remotely, RemoteOK, Arbeitnow, Remotive, and Hacker News.
 
-You have access to three tools:
-1. query_saved_listings -- search the user's matched/saved jobs with optional
-   filters for remote work and deadline cutoff.
-2. get_top_skills_breakdown -- see which skills are most in-demand across
-   the user's matched jobs.
-3. get_deadline_alerts -- find jobs whose application deadlines are expiring
-   soon.
+You have access to four tools:
+1. search_all_listings -- search across all 970+ ingested job opportunities in PostgreSQL by keyword, role, technology, remote status, or high-paying salary/stipend. ALWAYS use this when the user asks for high-paying roles, remote jobs, general opportunities, or specific tech roles in the market.
+2. query_saved_listings -- search the user's personal matched/saved jobs (with fallback to live market jobs if they haven't uploaded a resume yet).
+3. get_top_skills_breakdown -- see in-demand skills across matches and the overall job market.
+4. get_deadline_alerts -- find jobs whose application deadlines are expiring soon.
 
-Always call a tool when you need data.  Never fabricate job listings or
-statistics.  Be concise and actionable in your responses.
+Guidelines:
+- ALWAYS call a tool when the user asks for jobs, salaries, skills, or market information. Never fabricate job listings or say there are no jobs in the database without calling search_all_listings.
+- When presenting jobs, always highlight the Job Title, Company, Location (Remote status), and Salary/Stipend if available.
+- If the user has not uploaded a resume yet, provide the best matching live listings from search_all_listings or query_saved_listings, and gently let them know they can upload their resume in the Resume & Profile tab to calculate AI semantic match scores!
 """
 
 # ---------------------------------------------------------------------------
@@ -63,11 +63,40 @@ statistics.  Be concise and actionable in your responses.
 _TOOL_DECLARATIONS = types.Tool(
     function_declarations=[
         types.FunctionDeclaration(
+            name="search_all_listings",
+            description=(
+                "Search the full database of 970+ ingested job opportunities "
+                "in PostgreSQL by keyword, role, remote status, or high-paying salary. "
+                "Use this whenever the user asks for remote jobs, high-paying roles, "
+                "or exploring jobs across the market."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(
+                        type=types.Type.STRING,
+                        description="Keywords to search in title, company, or skills (e.g. 'Python', 'Engineer', 'Developer', 'Lead').",
+                        nullable=True,
+                    ),
+                    "filter_remote": types.Schema(
+                        type=types.Type.BOOLEAN,
+                        description="If true, only remote jobs. If false, only non-remote. Omit for all.",
+                        nullable=True,
+                    ),
+                    "high_paying_only": types.Schema(
+                        type=types.Type.BOOLEAN,
+                        description="If true, prioritize jobs with disclosed high salaries or stipends.",
+                        nullable=True,
+                    ),
+                },
+            ),
+        ),
+        types.FunctionDeclaration(
             name="query_saved_listings",
             description=(
-                "Query the user's saved or matched job listings. "
-                "Optionally filter by remote-friendliness or a maximum "
-                "deadline date."
+                "Query the user's personal saved or matched job listings. "
+                "Optionally filter by remote-friendliness or a maximum deadline date. "
+                "Falls back to live market listings if the user hasn't computed matches yet."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
@@ -89,7 +118,7 @@ _TOOL_DECLARATIONS = types.Tool(
             name="get_top_skills_breakdown",
             description=(
                 "Aggregate and count the most frequently required skills "
-                "across the user's matched job listings."
+                "across the user's matched jobs or across the overall market."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
@@ -129,7 +158,14 @@ async def _dispatch_tool(
     """Execute the named tool and return its result dict."""
     logger.info("[agent] Calling tool: %s(%s)", name, args)
 
-    if name == "query_saved_listings":
+    if name == "search_all_listings":
+        return await tool_search_all_listings(
+            session,
+            query=args.get("query"),
+            filter_remote=args.get("filter_remote"),
+            high_paying_only=args.get("high_paying_only"),
+        )
+    elif name == "query_saved_listings":
         return await tool_query_saved_listings(
             user_id,
             session,
@@ -202,7 +238,7 @@ async def run_agent_turn(
         logger.debug("[agent] Round %d, sending %d content parts", round_num, len(contents))
 
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash-lite",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM_PROMPT,

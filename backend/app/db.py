@@ -98,6 +98,10 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+# Alias for dependency injection in route handlers
+get_db = get_db_session
+
+
 async def init_db() -> None:
     """
     Ensure the ``pgvector`` extension exists and create all ORM tables.
