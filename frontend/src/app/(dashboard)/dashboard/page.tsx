@@ -6,6 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import type { ResumeResponse, MatchResponse, MatchComputeResponse } from '@/types/api';
 import { cn, formatDate, formatMatchScore } from '@/lib/utils';
+import { MAX_RESUME_FILE_BYTES, validateResumeFile } from '@/lib/resume-file';
+import { MatchCard } from '@/components/match-card';
 import toast from 'react-hot-toast';
 import {
   Upload,
@@ -41,8 +43,9 @@ function ResumeUploadZone() {
       const file = acceptedFiles[0];
       if (!file) return;
 
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        toast.error('Only PDF files are accepted.');
+      const validationError = validateResumeFile(file);
+      if (validationError) {
+        toast.error(validationError);
         return;
       }
 
@@ -74,6 +77,7 @@ function ResumeUploadZone() {
     onDrop,
     accept: { 'application/pdf': ['.pdf'] },
     maxFiles: 1,
+    maxSize: MAX_RESUME_FILE_BYTES,
     disabled: uploading,
   });
 
@@ -146,7 +150,10 @@ function ResumeUploadZone() {
 // ---------------------------------------------------------------------------
 // Match Card
 // ---------------------------------------------------------------------------
-function MatchCard({ match, onToggleSave }: { match: MatchResponse; onToggleSave: (id: string) => void }) {
+// The production card lives in components/match-card.tsx so it can be tested
+// independently from this App Router route module.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyMatchCard({ match, onToggleSave }: { match: MatchResponse; onToggleSave: (id: string) => void }) {
   const listing = match.listing;
   if (!listing) return null;
 

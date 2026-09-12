@@ -107,8 +107,11 @@ class ListingExtractor:
     """
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        # Construct the SDK client only when it is actually needed.  This
+        # allows the scraper/orchestrator to start in degraded mode when a
+        # deployment has no Gemini key, and lets extract() turn that into a
+        # normal failed record instead of a process-startup exception.
+        self._client: genai.Client | None = None
         self._model = "gemini-2.0-flash"
         self._cache: dict[str, ExtractedListing] = {}
 
@@ -122,6 +125,12 @@ class ListingExtractor:
 
         Returns ``None`` if extraction fails after all retries.
         """
+        # Do not send empty input to the provider.  Besides avoiding a paid
+        # request, this makes malformed scraper output a harmless skip.
+        if not raw_text or not raw_text.strip():
+            logger.warning("[extractor] Empty raw listing; skipping extraction.")
+            return None
+
         text_hash = self._text_hash(raw_text)
 
         # ── Cache hit ────────────────────────────────────────────────────
@@ -134,7 +143,7 @@ class ListingExtractor:
             types.Content(
                 role="user",
                 parts=[types.Part.from_text(
-                    f"Extract structured job data from this listing:\n\n{raw_text}"
+                    text=f"Extract structured job data from this listing:\n\n{raw_text}"
                 )],
             )
         ]
@@ -142,13 +151,16 @@ class ListingExtractor:
         last_error: str = ""
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                if self._client is None:
+                    settings = get_settings()
+                    self._client = genai.Client(api_key=settings.gemini_api_key)
                 if attempt > 1 and last_error:
                     # Repair prompt — feed the error back
                     messages.append(
                         types.Content(
                             role="user",
                             parts=[types.Part.from_text(
-                                _REPAIR_PROMPT_TEMPLATE.format(error=last_error)
+                                text=_REPAIR_PROMPT_TEMPLATE.format(error=last_error)
                             )],
                         )
                     )

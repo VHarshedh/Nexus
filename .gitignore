@@ -30,6 +30,9 @@ venv.bak/
 # ──────────────────────────────────────────────
 .claude/
 .gemini/
+.agents/
+.codex
+AGENTS.md
 
 # ──────────────────────────────────────────────
 # Dynamic uploads & Data
@@ -63,6 +66,7 @@ node_modules/
 dist/
 build/
 *.egg-info/
+*.tsbuildinfo
 
 # ──────────────────────────────────────────────
 # Logs & IDEs

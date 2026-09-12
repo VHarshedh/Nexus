@@ -7,11 +7,11 @@ import api from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { ResumeResponse } from '@/types/api';
 import { cn, formatDate } from '@/lib/utils';
+import { MAX_RESUME_FILE_BYTES, validateResumeFile } from '@/lib/resume-file';
 import toast from 'react-hot-toast';
 import {
   FileText,
   Upload,
-  Loader2,
   User,
   ChevronDown,
   ChevronUp,
@@ -36,8 +36,9 @@ export default function ResumePage() {
     async (acceptedFiles: File[]) => {
       const file = acceptedFiles[0];
       if (!file) return;
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        toast.error('Only PDF files are accepted.');
+      const validationError = validateResumeFile(file);
+      if (validationError) {
+        toast.error(validationError);
         return;
       }
 
@@ -69,6 +70,7 @@ export default function ResumePage() {
     onDrop,
     accept: { 'application/pdf': ['.pdf'] },
     maxFiles: 1,
+    maxSize: MAX_RESUME_FILE_BYTES,
     disabled: uploading,
   });
 
@@ -131,7 +133,7 @@ export default function ResumePage() {
           ) : (
             <>
               <p className="text-nexus-text-muted">Drag & drop your resume PDF, or click to browse</p>
-              <p className="text-nexus-text-dim text-sm mt-1">PDF files only</p>
+              <p className="text-nexus-text-dim text-sm mt-1">PDF files only, up to 10 MB</p>
             </>
           )}
         </div>

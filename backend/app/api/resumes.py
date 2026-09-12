@@ -15,10 +15,12 @@ Every query filters by ``user_id == current_user.id``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
 
+import aiofiles
 import pdfplumber
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from google import genai
@@ -44,6 +46,16 @@ from app.pipeline.embeddings import find_similar_listings, generate_embedding
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["resumes"])
+
+
+def _extract_pdf_text(file_path: Path) -> str:
+    """Run sync pdfplumber parsing off the FastAPI event loop."""
+    pages: list[str] = []
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            if page_text := page.extract_text():
+                pages.append(page_text)
+    return "\n".join(pages).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -72,20 +84,24 @@ async def upload_resume(
     upload_dir = settings.upload_dir / str(current_user.id) / "resumes"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_name = f"{uuid.uuid4().hex}_{file.filename}"
+    # UploadFile.filename is client-controlled.  Retain only its basename so
+    # path separators cannot escape the per-user upload directory.
+    original_name = Path(file.filename).name
+    safe_name = f"{uuid.uuid4().hex}_{original_name}"
     file_path = upload_dir / safe_name
 
     content = await file.read()
-    file_path.write_bytes(content)
+    if len(content) > settings.max_resume_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Resume exceeds the {settings.max_resume_upload_bytes // (1024 * 1024)} MB upload limit.",
+        )
+    async with aiofiles.open(file_path, "wb") as upload_file:
+        await upload_file.write(content)
 
     # -- Extract text with pdfplumber -----------------------------------------
-    raw_text = ""
     try:
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    raw_text += page_text + "\n"
+        raw_text = await asyncio.to_thread(_extract_pdf_text, file_path)
     except Exception as exc:
         logger.error("PDF extraction failed: %s", exc)
         raise HTTPException(
@@ -93,7 +109,6 @@ async def upload_resume(
             detail=f"Could not extract text from PDF: {exc}",
         )
 
-    raw_text = raw_text.strip()
     if not raw_text:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import random
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -59,7 +59,22 @@ def compute_canonical_hash(source_url: str, title: str, company: str) -> str:
     str
         64-character hex SHA-256 digest.
     """
-    normalised_url = source_url.strip().rstrip("/").lower()
+    # A fragment is never sent to a server and common tracking parameters do
+    # not identify a job.  Removing them prevents a board's campaign links
+    # from charging us for duplicate extraction/embedding work.  Other query
+    # parameters are preserved because some boards use them as a job ID.
+    parsed = urlsplit(source_url.strip())
+    query = urlencode(
+        sorted(
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_") and key.lower() not in {"ref", "source"}
+        ),
+        doseq=True,
+    )
+    normalised_url = urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/").lower(), query, "")
+    )
     normalised_title = (title or "").strip().lower()
     normalised_company = (company or "").strip().lower()
     payload = f"{normalised_url}||{normalised_title}||{normalised_company}"

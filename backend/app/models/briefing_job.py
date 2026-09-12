@@ -28,7 +28,7 @@ class BriefingJob(Base):
     )
     status: Mapped[str] = mapped_column(
         String(32), default="queued", nullable=False,
-        comment="queued | processing | done | failed",
+        comment="queued | generating_script | synthesizing_media | done | failed",
     )
     script: Mapped[str | None] = mapped_column(Text)
     media_url: Mapped[str | None] = mapped_column(String(2048))

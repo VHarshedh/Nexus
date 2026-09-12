@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import type { BriefingJobResponse, BriefingCreateResponse } from '@/types/api';
 import { cn, formatDate } from '@/lib/utils';
+import { BriefingStatusStepper as StatusStepper } from '@/components/briefing-status-stepper';
 import toast from 'react-hot-toast';
 import {
   Video,
@@ -27,16 +28,20 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 // ---------------------------------------------------------------------------
 const STEPS = [
   { key: 'queued', label: 'Queued', icon: Clock },
-  { key: 'processing-script', label: 'Generating Script', icon: PenTool },
-  { key: 'processing-media', label: 'Synthesizing Media', icon: AudioWaveform },
+  { key: 'generating_script', label: 'Generating Script', icon: PenTool },
+  { key: 'synthesizing_media', label: 'Synthesizing Avatar Video', icon: AudioWaveform },
   { key: 'done', label: 'Ready', icon: CheckCircle2 },
 ];
 
-function StatusStepper({ status }: { status: string }) {
+// Kept locally for now to avoid a visual behavior change while consumers use
+// the extracted component. It is not part of the route's runtime tree.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyStatusStepper({ status }: { status: string }) {
   let activeIdx = 0;
   if (status === 'queued') activeIdx = 0;
-  else if (status === 'processing') activeIdx = 1; // could be script or media
-  else if (status === 'done') activeIdx = 4; // past all steps
+  else if (status === 'generating_script') activeIdx = 1;
+  else if (status === 'synthesizing_media') activeIdx = 2;
+  else if (status === 'done') activeIdx = STEPS.length; // past all steps
   else if (status === 'failed') activeIdx = -1;
 
   if (status === 'failed') {
@@ -151,7 +156,8 @@ function BriefingCard({ briefing }: { briefing: BriefingJobResponse }) {
 
   const statusColor: Record<string, string> = {
     queued: 'bg-nexus-text-dim/20 text-nexus-text-dim',
-    processing: 'bg-nexus-warning/20 text-nexus-warning',
+    generating_script: 'bg-nexus-warning/20 text-nexus-warning',
+    synthesizing_media: 'bg-nexus-warning/20 text-nexus-warning',
     done: 'bg-nexus-success/20 text-nexus-success',
     failed: 'bg-nexus-danger/20 text-nexus-danger',
   };
@@ -189,7 +195,7 @@ function BriefingCard({ briefing }: { briefing: BriefingJobResponse }) {
           {briefing.status === 'done' && !briefing.media_url && briefing.script && (
             <p className="text-sm text-nexus-text-muted whitespace-pre-wrap">{briefing.script}</p>
           )}
-          {(briefing.status === 'queued' || briefing.status === 'processing') && (
+          {(briefing.status === 'queued' || briefing.status === 'generating_script' || briefing.status === 'synthesizing_media') && (
             <StatusStepper status={briefing.status} />
           )}
         </div>
@@ -204,7 +210,6 @@ function BriefingCard({ briefing }: { briefing: BriefingJobResponse }) {
 export default function BriefingsPage() {
   const queryClient = useQueryClient();
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch all briefings
   const { data: briefings, isLoading: listLoading } = useQuery<BriefingJobResponse[]>({
@@ -232,13 +237,6 @@ export default function BriefingsPage() {
       queryClient.invalidateQueries({ queryKey: ['briefings'] });
     }
   }, [activeJob, queryClient]);
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
-  }, []);
 
   const generateMutation = useMutation<BriefingCreateResponse>({
     mutationFn: async () => (await api.post('/api/briefings/generate')).data,

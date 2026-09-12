@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     # -- File Uploads ---------------------------------------------------------
     upload_dir: Path = Path(__file__).resolve().parent.parent / "uploads"
+    max_resume_upload_bytes: int = 10 * 1024 * 1024
 
     # -- Video Briefing -------------------------------------------------------
     heygen_api_key: str = ""  # optional; falls back to Edge-TTS if empty
@@ -60,4 +61,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached singleton of the application settings."""
     return Settings()
-

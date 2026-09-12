@@ -184,7 +184,7 @@ async def run_agent_turn(
         contents.append(
             types.Content(
                 role="user" if msg["role"] == "user" else "model",
-                parts=[types.Part.from_text(msg["content"])],
+                parts=[types.Part.from_text(text=msg["content"])],
             )
         )
 
@@ -192,7 +192,7 @@ async def run_agent_turn(
     contents.append(
         types.Content(
             role="user",
-            parts=[types.Part.from_text(user_message)],
+            parts=[types.Part.from_text(text=user_message)],
         )
     )
 

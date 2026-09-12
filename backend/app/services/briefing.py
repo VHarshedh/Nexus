@@ -237,11 +237,24 @@ async def run_briefing_pipeline(job_id: uuid.UUID) -> None:
             return
 
         user_id = job.user_id
-        job.status = "processing"
+        job.status = "generating_script"
 
     try:
         # -- Step 1: Generate script ------------------------------------------
         script = await generate_briefing_script(user_id)
+
+        # Persist a granular, observable stage before network-bound media
+        # work.  The frontend can now accurately distinguish script creation
+        # from HeyGen/Edge-TTS synthesis while polling.
+        async with get_session() as session:
+            result = await session.execute(
+                select(BriefingJob).where(BriefingJob.id == job_id)
+            )
+            job = result.scalar_one_or_none()
+            if job is None:
+                logger.error("[briefing] Job %s disappeared before media synthesis.", job_id)
+                return
+            job.status = "synthesizing_media"
 
         # -- Step 2: Synthesise media -----------------------------------------
         settings = get_settings()
