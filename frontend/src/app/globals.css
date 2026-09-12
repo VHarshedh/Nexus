@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-nexus-bg text-nexus-text antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-nexus-bg;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-nexus-border rounded-full hover:bg-nexus-text-dim;
+  }
+
+  ::selection {
+    @apply bg-nexus-accent/30;
+  }
+}
+
+@layer components {
+  .nexus-card {
+    @apply bg-nexus-surface border border-nexus-border rounded-xl p-5 transition-all duration-200;
+  }
+
+  .nexus-card-hover {
+    @apply nexus-card hover:border-nexus-accent/40 hover:shadow-lg hover:shadow-nexus-accent/5;
+  }
+
+  .nexus-btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 bg-nexus-accent hover:bg-nexus-accent-hover text-white font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .nexus-btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 bg-nexus-surface-2 hover:bg-nexus-border text-nexus-text border border-nexus-border font-medium rounded-lg transition-all duration-200;
+  }
+
+  .nexus-btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-nexus-text-muted hover:text-nexus-text hover:bg-nexus-surface-2 rounded-lg transition-all duration-200;
+  }
+
+  .nexus-input {
+    @apply w-full px-4 py-2.5 bg-nexus-surface-2 border border-nexus-border rounded-lg text-nexus-text placeholder:text-nexus-text-dim focus:outline-none focus:ring-2 focus:ring-nexus-accent/50 focus:border-nexus-accent transition-all duration-200;
+  }
+}
