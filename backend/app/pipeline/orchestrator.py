@@ -27,8 +27,11 @@ from typing import Sequence
 
 from sqlalchemy import select, update
 
+from app.config import get_settings
 from app.db import get_session
 from app.models.job_listing import JobListing
+from app.models.user import User
+from app.models.user_listing_match import UserListingMatch
 from app.pipeline.embeddings import generate_embedding
 from app.pipeline.extractor import ListingExtractor
 from app.scrapers.adzuna import AdzunaScraper
@@ -40,6 +43,7 @@ from app.scrapers.remoteok import RemoteOKScraper
 from app.scrapers.remotive import RemotiveScraper
 from app.scrapers.utils import compute_canonical_hash
 from app.scrapers.weworkremotely import WeWorkRemotelyScraper
+from app.services.email import send_job_change_alert_email
 
 logger = logging.getLogger(__name__)
 
@@ -146,14 +150,97 @@ async def _process_listing(
         existing = result.scalar_one_or_none()
 
         if existing is not None:
-            # Listing already in DB — update scraped_at
+            # Listing already in DB — update scraped_at & check for delta changes
             existing.scraped_at = datetime.now(timezone.utc)
+            changes: list[str] = []
+
+            # 1. Re-activate if listing was marked inactive
+            if not existing.is_active:
+                existing.is_active = True
+                existing.taken_down_at = None
+                changes.append("Listing re-detected active and brought back online")
+
+            # 2. Check stipend / compensation changes
+            if raw.stipend and raw.stipend.strip() and raw.stipend.strip() != (existing.stipend or "").strip():
+                old_comp = existing.stipend or "Unspecified"
+                changes.append(f"Compensation updated: {old_comp} -> {raw.stipend.strip()}")
+                existing.stipend = raw.stipend.strip()
+
+            # 3. Check deadline changes
+            if raw.deadline and raw.deadline.strip() and raw.deadline.strip() != (existing.deadline or "").strip():
+                old_dl = existing.deadline or "Open"
+                changes.append(f"Deadline updated: {old_dl} -> {raw.deadline.strip()}")
+                existing.deadline = raw.deadline.strip()
+
+            # 4. Check location changes
+            if raw.location and raw.location.strip() and raw.location.strip() != (existing.location or "").strip():
+                old_loc = existing.location or "Unspecified"
+                changes.append(f"Location updated: {old_loc} -> {raw.location.strip()}")
+                existing.location = raw.location.strip()
+
+            # 5. Check remote policy changes
+            if raw.remote_ok is not None and raw.remote_ok != existing.remote_ok:
+                old_rem = "Remote OK" if existing.remote_ok else "On-site"
+                new_rem = "Remote OK" if raw.remote_ok else "On-site"
+                changes.append(f"Remote policy updated: {old_rem} -> {new_rem}")
+                existing.remote_ok = raw.remote_ok
+
+            # Backfill embedding if missing
             if existing.embedding is None and not skip_embeddings:
                 existing.embedding = await generate_embedding(raw.raw_text)
                 if existing.embedding:
                     logger.info("[*] Backfilled embedding for: %s", raw.source_url)
-            logger.debug("Dedup hit: %s — updated scraped_at.", raw.source_url)
-            stats["updated"] += 1
+
+            if changes:
+                logger.info(
+                    "[change-detected] Listing %s (%s @ %s) updated: %s",
+                    existing.id,
+                    existing.title,
+                    existing.company,
+                    "; ".join(changes),
+                )
+                stats["updated"] += 1
+
+                # Alert all users who have saved this listing in their shortlist
+                saved_stmt = select(UserListingMatch).where(
+                    UserListingMatch.listing_id == existing.id,
+                    UserListingMatch.saved.is_(True),
+                )
+                saved_res = await session.execute(saved_stmt)
+                saved_matches = saved_res.scalars().all()
+
+                if saved_matches:
+                    change_alert_msg = "Listing updated on source site: " + "; ".join(changes)
+                    now_utc = datetime.now(timezone.utc)
+                    settings = get_settings()
+                    shortlist_url = f"{settings.frontend_url}/shortlist"
+
+                    for match in saved_matches:
+                        match.change_alert = change_alert_msg
+                        match.change_alert_at = now_utc
+
+                        user_stmt = select(User).where(User.id == match.user_id)
+                        user_res = await session.execute(user_stmt)
+                        matched_user = user_res.scalar_one_or_none()
+                        if matched_user and matched_user.email and matched_user.is_verified:
+                            try:
+                                await send_job_change_alert_email(
+                                    to_email=matched_user.email,
+                                    job_title=existing.title or "Untitled Role",
+                                    company=existing.company or "Unknown Company",
+                                    changes_summary="\n".join(changes),
+                                    shortlist_url=shortlist_url,
+                                )
+                            except Exception as email_err:
+                                logger.error(
+                                    "Failed to send change alert email to %s: %s",
+                                    matched_user.email,
+                                    email_err,
+                                )
+            else:
+                logger.debug("Dedup hit: %s — updated scraped_at.", raw.source_url)
+                stats["updated"] += 1
+
             return
 
         # ── LLM Extraction (if needed) ───────────────────────────────────

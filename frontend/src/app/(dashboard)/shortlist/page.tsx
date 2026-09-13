@@ -22,10 +22,13 @@ import {
   Video,
   Play,
   Sparkles,
+  AlertTriangle,
+  Bell,
+  Check,
 } from 'lucide-react';
 
 type SortKey = 'score' | 'company' | 'deadline';
-type FilterMode = 'all' | 'remote' | 'deadline';
+type FilterMode = 'all' | 'alerts' | 'remote' | 'deadline';
 
 export default function ShortlistPage() {
   const queryClient = useQueryClient();
@@ -52,6 +55,22 @@ export default function ShortlistPage() {
     onError: () => toast.error('Failed to update shortlist.'),
   });
 
+  const dismissMutation = useMutation({
+    mutationFn: async (matchId: string) => (await api.patch(`/api/matches/${matchId}/dismiss-alert`)).data,
+    onSuccess: () => {
+      toast.success('Alert dismissed');
+      queryClient.invalidateQueries({ queryKey: ['matches'] });
+    },
+    onError: () => toast.error('Failed to dismiss alert.'),
+  });
+
+  // Count active alerts across all saved matches
+  const alertCount = useMemo(() => {
+    return (allMatches || []).filter(
+      (m) => m.saved && (m.change_alert || m.listing?.is_active === false),
+    ).length;
+  }, [allMatches]);
+
   // Filter to saved only, then apply search + filter + sort
   const savedMatches = useMemo(() => {
     let items = (allMatches || []).filter((m) => m.saved);
@@ -62,12 +81,15 @@ export default function ShortlistPage() {
       items = items.filter(
         (m) =>
           m.listing?.title?.toLowerCase().includes(q) ||
-          m.listing?.company?.toLowerCase().includes(q),
+          m.listing?.company?.toLowerCase().includes(q) ||
+          m.change_alert?.toLowerCase().includes(q),
       );
     }
 
     // Filter mode
-    if (filterMode === 'remote') {
+    if (filterMode === 'alerts') {
+      items = items.filter((m) => m.change_alert || m.listing?.is_active === false);
+    } else if (filterMode === 'remote') {
       items = items.filter((m) => m.listing?.remote_ok);
     } else if (filterMode === 'deadline') {
       items = items.filter((m) => m.listing?.deadline);
@@ -136,6 +158,11 @@ export default function ShortlistPage() {
         </h1>
         <p className="text-nexus-text-muted mt-1">
           {savedMatches.length} saved position{savedMatches.length !== 1 ? 's' : ''}
+          {alertCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1 text-amber-400 font-medium">
+              • {alertCount} change alert{alertCount !== 1 ? 's' : ''} active
+            </span>
+          )}
         </p>
       </div>
 
@@ -172,7 +199,7 @@ export default function ShortlistPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-nexus-text-dim" />
           <input
             type="text"
-            placeholder="Search by title or company…"
+            placeholder="Search by title, company, or alert…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="nexus-input pl-10"
@@ -181,29 +208,45 @@ export default function ShortlistPage() {
 
         <div className="flex items-center gap-1 bg-nexus-surface rounded-lg border border-nexus-border p-0.5">
           <Filter className="w-4 h-4 text-nexus-text-dim ml-2" />
-          {(['all', 'remote', 'deadline'] as FilterMode[]).map((mode) => (
+          {(['all', 'alerts', 'remote', 'deadline'] as FilterMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => setFilterMode(mode)}
               className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-all capitalize',
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5',
                 filterMode === mode
                   ? 'bg-nexus-accent text-white'
                   : 'text-nexus-text-muted hover:text-nexus-text',
               )}
             >
-              {mode === 'all' ? 'All' : mode === 'remote' ? 'Remote Only' : 'Has Deadline'}
+              {mode === 'all' ? (
+                'All'
+              ) : mode === 'alerts' ? (
+                <>
+                  <Bell size={12} className={alertCount > 0 ? 'text-amber-400' : ''} />
+                  <span>Alerts</span>
+                  {alertCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                      {alertCount}
+                    </span>
+                  )}
+                </>
+              ) : mode === 'remote' ? (
+                'Remote Only'
+              ) : (
+                'Has Deadline'
+              )}
             </button>
           ))}
         </div>
 
         <div className="flex items-center gap-1 bg-nexus-surface rounded-lg border border-nexus-border p-0.5">
           <SortAsc className="w-4 h-4 text-nexus-text-dim ml-2" />
-          {([
+          {[
             { key: 'score' as SortKey, label: 'Score' },
             { key: 'company' as SortKey, label: 'Company' },
             { key: 'deadline' as SortKey, label: 'Deadline' },
-          ]).map(({ key, label }) => (
+          ].map(({ key, label }) => (
             <button
               key={key}
               onClick={() => setSortBy(key)}
@@ -227,9 +270,21 @@ export default function ShortlistPage() {
             const listing = match.listing;
             if (!listing) return null;
             const { percent, color } = formatMatchScore(match.match_score);
+            const isInactive = listing.is_active === false;
+            const hasAlert = Boolean(match.change_alert) || isInactive;
 
             return (
-              <div key={match.id} className="nexus-card-hover animate-fade-in">
+              <div
+                key={match.id}
+                className={cn(
+                  'nexus-card transition-all duration-200',
+                  hasAlert
+                    ? isInactive
+                      ? 'border-red-500/40 bg-red-950/10 hover:border-red-500/60'
+                      : 'border-amber-500/40 bg-amber-950/10 hover:border-amber-500/60'
+                    : 'hover:border-nexus-border-hover',
+                )}
+              >
                 <div className="flex items-center gap-4">
                   {/* Score */}
                   <div className="flex-shrink-0 w-16 text-center">
@@ -241,9 +296,21 @@ export default function ShortlistPage() {
 
                   {/* Info */}
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-white truncate">
-                      {listing.title || 'Untitled Position'}
-                    </h3>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-white truncate">
+                        {listing.title || 'Untitled Position'}
+                      </h3>
+                      {isInactive && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-red-500/20 text-red-400 border border-red-500/30">
+                          Inactive / Taken Down
+                        </span>
+                      )}
+                      {!isInactive && match.change_alert && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                          <Bell size={10} /> Updated
+                        </span>
+                      )}
+                    </div>
                     <p className="text-nexus-text-muted text-sm">{listing.company || 'Unknown Company'}</p>
                     <div className="flex flex-wrap gap-2 mt-1.5">
                       {listing.location && (
@@ -290,6 +357,52 @@ export default function ShortlistPage() {
                   </div>
                 </div>
 
+                {/* Change Detection & Takedown Alert Banner */}
+                {hasAlert && (
+                  <div
+                    className={cn(
+                      'mt-3 p-3 rounded-lg border flex items-start justify-between gap-3 text-xs transition-all',
+                      isInactive
+                        ? 'bg-red-950/30 border-red-500/30 text-red-200'
+                        : 'bg-amber-950/30 border-amber-500/30 text-amber-200',
+                    )}
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <AlertTriangle
+                        className={cn(
+                          'w-4 h-4 mt-0.5 flex-shrink-0',
+                          isInactive ? 'text-red-400' : 'text-amber-400',
+                        )}
+                      />
+                      <div>
+                        <span className="font-semibold uppercase tracking-wider text-[10px] block mb-0.5">
+                          {isInactive ? 'Listing Taken Down or Expired' : 'Listing Updates Detected'}
+                        </span>
+                        <p className="opacity-90 leading-relaxed break-words">
+                          {match.change_alert ||
+                            'This position appears to have been removed or closed on the source board.'}
+                        </p>
+                        {match.change_alert_at && (
+                          <span className="text-[10px] opacity-70 block mt-1">
+                            Detected {formatDate(match.change_alert_at)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {match.change_alert && (
+                      <button
+                        onClick={() => dismissMutation.mutate(match.id)}
+                        disabled={dismissMutation.isPending}
+                        className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded bg-nexus-surface-2 hover:bg-nexus-surface text-nexus-text text-[11px] border border-nexus-border transition-colors disabled:opacity-50"
+                        title="Acknowledge and dismiss this alert"
+                      >
+                        <Check size={12} />
+                        <span>Dismiss</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {match.justification && (
                   <p className="text-sm text-nexus-text-dim italic mt-3 pl-20">
                     &ldquo;{match.justification}&rdquo;
@@ -302,9 +415,11 @@ export default function ShortlistPage() {
       ) : (
         <div className="nexus-card text-center py-12">
           <Bookmark className="w-12 h-12 text-nexus-text-dim mx-auto mb-4" />
-          <h3 className="text-white font-medium mb-1">No saved listings</h3>
+          <h3 className="text-white font-medium mb-1">No saved listings found</h3>
           <p className="text-nexus-text-muted text-sm">
-            Save matches from the Explore Matches page to build your shortlist.
+            {filterMode === 'alerts'
+              ? 'None of your saved listings currently have change or takedown alerts.'
+              : 'Save matches from the Explore Matches page to build your shortlist.'}
           </p>
         </div>
       )}

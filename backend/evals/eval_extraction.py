@@ -293,6 +293,9 @@ async def run_evaluation(mock_mode: bool = False) -> tuple[float, list[SampleSco
         # Patch client with mock responses for fast deterministic run
         fake_model = MockModelClient(MOCK_RESPONSES)
         extractor._client = SimpleNamespace(aio=SimpleNamespace(models=fake_model))
+        from app.pipeline import extractor as ext_mod
+        async def _noop(): pass
+        ext_mod._extractor_limiter.acquire = _noop
 
     scores: list[SampleScore] = []
 

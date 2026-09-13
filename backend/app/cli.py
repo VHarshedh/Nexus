@@ -238,6 +238,80 @@ def eval_extraction_cmd(mock: bool) -> None:
         sys.exit(1)
 
 
+# ─── Scheduled Refresh & Change Detection ──────────────────────────────────
+@cli.command("run-scheduled-refresh")
+@click.option(
+    "--health-check/--no-health-check",
+    default=True,
+    help="Check remote health and takedowns for saved job listings.",
+)
+@click.option(
+    "--scrape/--no-scrape",
+    default=True,
+    help="Run job scrapers and detect listing changes.",
+)
+@click.option(
+    "--match-refresh/--no-match-refresh",
+    default=True,
+    help="Automatically refresh matches for all verified candidates.",
+)
+@click.option(
+    "--source", "-s",
+    multiple=True,
+    help="Optional scraper sources to run. Omit to run all enabled sources.",
+)
+@click.option(
+    "--skip-embeddings",
+    is_flag=True,
+    default=False,
+    help="Skip embedding generation.",
+)
+def run_scheduled_refresh_cmd(
+    health_check: bool,
+    scrape: bool,
+    match_refresh: bool,
+    source: tuple[str, ...],
+    skip_embeddings: bool,
+) -> None:
+    """Run automated scheduled pipeline: takedown health check, re-scraping, and match refresh."""
+    from app.services.scheduler import run_scheduled_pipeline
+
+    console.print(
+        "\n[bold cyan]⚡ Running NEXUS Scheduled Refresh & Change Detection[/bold cyan]"
+        f"\n   Health Check:   {'[green]ON[/green]' if health_check else '[dim]OFF[/dim]'}"
+        f"\n   Ingest Scrape:  {'[green]ON[/green]' if scrape else '[dim]OFF[/dim]'}"
+        f"\n   Match Refresh:  {'[green]ON[/green]' if match_refresh else '[dim]OFF[/dim]'}"
+        f"\n   Sources:        {list(source) if source else 'ALL'}\n"
+    )
+
+    sources = list(source) if source else None
+    report = asyncio.run(
+        run_scheduled_pipeline(
+            run_scraper=scrape,
+            run_health_check=health_check,
+            run_match_refresh=match_refresh,
+            scraper_names=sources,
+            skip_embeddings=skip_embeddings,
+        )
+    )
+
+    table = Table(title="Scheduled Run Summary", show_header=True, header_style="bold magenta")
+    table.add_column("Phase", style="cyan")
+    table.add_column("Result / Details", style="green")
+
+    if report.get("health_check"):
+        hc = report["health_check"]
+        table.add_row("Health Check", f"Checked: {hc.get('checked', 0)}, Takedowns: {hc.get('taken_down', 0)}, Alerts Sent: {hc.get('alerts_dispatched', 0)}")
+    if report.get("scraper"):
+        sc = report["scraper"]
+        table.add_row("Scraper Pipeline", f"Scraped: {sc.get('scraped', 0)}, New: {sc.get('new', 0)}, Updated: {sc.get('updated', 0)}, Failed: {sc.get('failed', 0)}")
+    if report.get("match_refresh"):
+        mr = report["match_refresh"]
+        table.add_row("Match Refresh", f"Users: {mr.get('users_refreshed', 0)}, Matches Updated: {mr.get('total_matches', 0)}")
+
+    console.print(table)
+
+
 # ─── Entry Point ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     cli()

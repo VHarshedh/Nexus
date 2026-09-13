@@ -60,6 +60,8 @@ class JobListing(Base):
     required_skills: Mapped[dict | list | None] = mapped_column(JSONB)
     experience_level: Mapped[str | None] = mapped_column(String(64))
     deadline: Mapped[str | None] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    taken_down_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Embedding (768-dim for text-embedding-004) ───────────────────────
     embedding: Mapped[list[float] | None] = mapped_column(

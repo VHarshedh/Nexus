@@ -39,6 +39,8 @@ export interface MatchListingDetail {
   experience_level: string | null;
   deadline: string | null;
   source_url: string;
+  is_active?: boolean;
+  taken_down_at?: string | null;
 }
 
 /** Mirrors backend MatchResponse */
@@ -49,6 +51,8 @@ export interface MatchResponse {
   justification: string | null;
   saved: boolean;
   status: string;
+  change_alert?: string | null;
+  change_alert_at?: string | null;
   created_at: string;
   listing: MatchListingDetail | null;
 }

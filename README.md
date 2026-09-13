@@ -94,10 +94,17 @@ sequenceDiagram
     S->>O: Yields RawListing(source_url, title?, company?, raw_text)
     O->>O: Compute initial canonical_hash
     O->>DB: Query: source_url == raw.source_url OR canonical_hash == hash
-    alt Listing Already Exists (Dedup Hit)
+    alt Listing Already Exists (Dedup Hit & Change Detection)
         DB-->>O: Existing JobListing row returned
-        O->>DB: UPDATE job_listings SET scraped_at = NOW()
-        Note over O,AI: Skips LLM extraction & embeddings completely!
+        O->>O: Compare stipend, deadline, location, remote policy against raw
+        alt Content Changed (Salary / Deadline / Remote Policy / Reactivation)
+            O->>DB: UPDATE job_listings SET stipend/deadline/remote, is_active = True
+            O->>DB: Flag saved UserListingMatches with change_alert
+            O->>AI: Dispatch change alert email via Gmail SMTP
+        else No Content Changes
+            O->>DB: UPDATE job_listings SET scraped_at = NOW()
+        end
+        Note over O,AI: Skips costly LLM extraction & vector embeddings!
         O-->>S: Record refreshed (Cost: $0.00, Time: < 2ms)
     else Listing is New
         DB-->>O: None
@@ -117,6 +124,22 @@ sequenceDiagram
 - `job_listings.source_url`: Defined with a `UNIQUE` constraint at the database schema layer.
 - `job_listings.canonical_hash`: Indexed with a standard PostgreSQL B-tree index (`ix_job_listings_canonical_hash`) for $O(\log n)$ lookup speed.
 - Ingestion runs inside an atomic transaction: collisions encountered during concurrent scraping passes trigger an immediate update of `scraped_at` rather than raising a duplicate key error.
+
+### E. Scheduled Runs & Change Detection
+- **Automated Cron Pipeline**: Configurable scheduled worker executed via CLI:
+  ```powershell
+  python -m app.cli run-scheduled-refresh
+  ```
+  Options include `--health-check / --no-health-check`, `--scrape / --no-scrape`, `--match-refresh / --no-match-refresh`, and `--source <name>`.
+- **Takedown & Health Probes**: Active HTTP health checks probe the source URLs of all saved listings. If a remote posting returns `404 Not Found`, `410 Gone`, or contains closure signals ("no longer accepting applications", "job expired"):
+  - Listing is flagged `is_active = False` with `taken_down_at = NOW()`.
+  - Shortlisted candidates receive an in-app takedown alert and an immediate transactional email notification via Gmail SMTP.
+- **Listing Modification Detection**: When recurring scraping passes encounter an existing listing whose salary, deadline, location, or remote policy has changed, the database row is updated and shortlisted users receive an amber badge alert and email breakdown.
+- **Automated Match Refreshes**: Verified candidates with uploaded resumes have their match recommendations recomputed automatically against incoming listings.
+- **Frontend Shortlist Experience**:
+  - Distinct badge visualizer (Amber `Updated`, Red `Inactive / Taken Down`).
+  - Interactive "Dismiss" action calling `PATCH /api/matches/{id}/dismiss-alert`.
+  - Filter toggle (`Alerts`) with live count badge.
 
 ---
 
@@ -243,6 +266,7 @@ frontend/src/
 | `POST /api/matches/compute` | Yes | Runs hybrid search against the user's latest resume vector. |
 | `GET /api/matches/` | Yes | Lists caller's matched opportunities with match scores. |
 | `PATCH /api/matches/{match_id}/save` | Yes | Toggles shortlist status (`is_saved = true/false`). |
+| `PATCH /api/matches/{match_id}/dismiss-alert` | Yes | Clears change or takedown alert on a saved match. |
 | `POST /api/briefings/generate` | Yes | Queues an asynchronous video/audio briefing job (`202 Accepted`). |
 | `GET /api/briefings/{job_id}` | Yes | Polls status of a specific briefing owned by the user. |
 | `GET /api/briefings/` | Yes | Lists all briefings generated for the caller. |

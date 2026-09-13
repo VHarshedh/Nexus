@@ -38,6 +38,12 @@ class UserListingMatch(Base):
         String(32), default="pending", nullable=False,
         comment="pending | reviewed | applied | rejected",
     )
+    change_alert: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Alert summary if saved listing was modified or taken down",
+    )
+    change_alert_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

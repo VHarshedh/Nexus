@@ -112,6 +112,8 @@ class MatchListingDetail(BaseModel):
     experience_level: str | None
     deadline: str | None
     source_url: str
+    is_active: bool = True
+    taken_down_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -123,6 +125,8 @@ class MatchResponse(BaseModel):
     justification: str | None
     saved: bool
     status: str
+    change_alert: str | None = None
+    change_alert_at: datetime | None = None
     created_at: datetime
     listing: MatchListingDetail | None = None
 

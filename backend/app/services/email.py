@@ -198,3 +198,75 @@ async def send_password_reset_email(to_email: str, reset_url: str) -> bool:
         notice_text="This link expires in 10 minutes and can only be used once. If you did not request this, your password remains unchanged.",
     )
     return await send_email(to_email, subject, text, html)
+
+
+async def send_job_change_alert_email(
+    to_email: str,
+    job_title: str,
+    company: str,
+    changes_summary: str,
+    shortlist_url: str,
+) -> bool:
+    """Notify user when a saved listing has been modified (deadline, salary, location, remote)."""
+    subject = f"⚡ Update: Changes detected for {job_title} at {company}"
+    text = (
+        f"NEXUS Shortlist Change Alert\n\n"
+        f"A job listing in your shortlist was recently updated on the source website:\n"
+        f"Role: {job_title}\n"
+        f"Company: {company}\n\n"
+        f"What changed:\n{changes_summary}\n\n"
+        f"Review your shortlist and application status:\n{shortlist_url}\n"
+    )
+    html = _build_html_template(
+        title=subject,
+        greeting="Listing Updated",
+        body_text=(
+            f"A job listing you saved in your NEXUS shortlist has been modified on the source website:<br><br>"
+            f"<strong>Role:</strong> {job_title}<br>"
+            f"<strong>Company:</strong> {company}<br><br>"
+            f"<strong>Changes Detected:</strong><br>"
+            f"<div style='background-color: #1e293b; padding: 12px 16px; border-radius: 8px; font-family: monospace; font-size: 13px; color: #38bdf8; margin: 10px 0;'>"
+            f"{changes_summary.replace(chr(10), '<br>')}"
+            f"</div>"
+            f"Check your shortlist to update your notes and application schedule."
+        ),
+        action_url=shortlist_url,
+        action_text="View in Shortlist",
+        notice_text="You are receiving this because you saved this position to your NEXUS shortlist.",
+    )
+    return await send_email(to_email, subject, text, html)
+
+
+async def send_job_takedown_alert_email(
+    to_email: str,
+    job_title: str,
+    company: str,
+    source_url: str,
+    shortlist_url: str,
+) -> bool:
+    """Notify user when a saved listing appears inactive, closed, or 404/410."""
+    subject = f"⚠️ Notice: {job_title} at {company} appears inactive or taken down"
+    text = (
+        f"NEXUS Shortlist Alert: Listing Inactive\n\n"
+        f"A job listing you saved in your shortlist is no longer available on the source site:\n"
+        f"Role: {job_title}\n"
+        f"Company: {company}\n"
+        f"Source URL: {source_url}\n\n"
+        f"The post returned an HTTP 404/410 or was marked closed. NEXUS has flagged this role as inactive in your shortlist.\n"
+        f"Review your shortlist:\n{shortlist_url}\n"
+    )
+    html = _build_html_template(
+        title=subject,
+        greeting="Listing Inactive or Taken Down",
+        body_text=(
+            f"A job listing you saved in your shortlist appears to have been taken down or expired:<br><br>"
+            f"<strong>Role:</strong> {job_title}<br>"
+            f"<strong>Company:</strong> {company}<br><br>"
+            f"During our automated health verification, the remote posting was unreachable or marked closed. "
+            f"NEXUS has marked this role as <strong>inactive</strong> in your shortlist so you don't spend time preparing obsolete applications."
+        ),
+        action_url=shortlist_url,
+        action_text="Review Shortlist",
+        notice_text="You are receiving this automated alert because this role was saved in your shortlist.",
+    )
+    return await send_email(to_email, subject, text, html)

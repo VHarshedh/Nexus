@@ -151,6 +151,86 @@ async def list_resumes(
     return [ResumeResponse.model_validate(r) for r in resumes]
 
 
+async def refresh_user_matches(
+    user_id: uuid.UUID,
+    session: AsyncSession,
+    top_k: int = 20,
+) -> list[MatchResponse]:
+    """Compute or refresh semantic matches between a user's latest resume and all listings."""
+    # -- Get the user's latest resume with an embedding -----------------------
+    result = await session.execute(
+        select(Resume)
+        .where(Resume.user_id == user_id, Resume.embedding.isnot(None))
+        .order_by(Resume.uploaded_at.desc())
+        .limit(1)
+    )
+    resume = result.scalar_one_or_none()
+    if resume is None:
+        return []
+
+    # -- Semantic search via pgvector -----------------------------------------
+    similar = await find_similar_listings(resume.embedding, session, top_k=top_k)
+    if not similar:
+        return []
+
+    # -- Generate LLM justifications in bulk ----------------------------------
+    settings = get_settings()
+    client = genai.Client(api_key=settings.gemini_api_key)
+    matches_out: list[MatchResponse] = []
+
+    for listing, distance in similar:
+        score = max(0.0, 1.0 - distance)
+
+        # Upsert UserListingMatch (avoid duplicates on re-run)
+        existing = await session.execute(
+            select(UserListingMatch).where(
+                UserListingMatch.user_id == user_id,
+                UserListingMatch.listing_id == listing.id,
+            )
+        )
+        match_row = existing.scalar_one_or_none()
+
+        if match_row is None:
+            justification = await _generate_justification(
+                client, resume.raw_text, listing
+            )
+            match_row = UserListingMatch(
+                user_id=user_id,
+                listing_id=listing.id,
+                match_score=round(score, 4),
+                justification=justification,
+                saved=False,
+                status="pending",
+            )
+            session.add(match_row)
+        else:
+            match_row.match_score = round(score, 4)
+            if not match_row.justification:
+                match_row.justification = await _generate_justification(
+                    client, resume.raw_text, listing
+                )
+
+        await session.flush()
+
+        listing_detail = MatchListingDetail.model_validate(listing)
+        matches_out.append(
+            MatchResponse(
+                id=match_row.id,
+                listing_id=listing.id,
+                match_score=match_row.match_score,
+                justification=match_row.justification,
+                saved=match_row.saved,
+                status=match_row.status,
+                change_alert=match_row.change_alert,
+                change_alert_at=match_row.change_alert_at,
+                created_at=match_row.created_at,
+                listing=listing_detail,
+            )
+        )
+
+    return matches_out
+
+
 # ---------------------------------------------------------------------------
 # Compute Matches
 # ---------------------------------------------------------------------------
@@ -163,81 +243,17 @@ async def compute_matches(
     """Compute cosine-similarity matches between the user's latest resume
     and all job listings, then generate LLM justifications for the top hits.
     """
-    # -- Get the user's latest resume with an embedding -----------------------
-    result = await session.execute(
-        select(Resume)
-        .where(Resume.user_id == current_user.id, Resume.embedding.isnot(None))
-        .order_by(Resume.uploaded_at.desc())
-        .limit(1)
-    )
-    resume = result.scalar_one_or_none()
-
-    if resume is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No resume with embedding found. Upload a resume first.",
+    matches_out = await refresh_user_matches(current_user.id, session, top_k=top_k)
+    if not matches_out:
+        # Check if user had no resume
+        res = await session.execute(
+            select(Resume).where(Resume.user_id == current_user.id, Resume.embedding.isnot(None))
         )
-
-    # -- Semantic search via pgvector -----------------------------------------
-    similar = await find_similar_listings(resume.embedding, session, top_k=top_k)
-
-    if not similar:
-        return MatchComputeResponse(computed=0, matches=[])
-
-    # -- Generate LLM justifications in bulk ----------------------------------
-    settings = get_settings()
-    client = genai.Client(api_key=settings.gemini_api_key)
-
-    matches_out: list[MatchResponse] = []
-
-    for listing, distance in similar:
-        # Cosine distance -> similarity score (0..1 range, higher = better)
-        score = max(0.0, 1.0 - distance)
-
-        # Build a concise prompt for justification
-        justification = await _generate_justification(
-            client, resume.raw_text, listing
-        )
-
-        # Upsert UserListingMatch (avoid duplicates on re-run)
-        existing = await session.execute(
-            select(UserListingMatch).where(
-                UserListingMatch.user_id == current_user.id,
-                UserListingMatch.listing_id == listing.id,
+        if not res.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No resume with embedding found. Upload a resume first.",
             )
-        )
-        match_row = existing.scalar_one_or_none()
-
-        if match_row is None:
-            match_row = UserListingMatch(
-                user_id=current_user.id,
-                listing_id=listing.id,
-                match_score=round(score, 4),
-                justification=justification,
-                saved=False,
-                status="pending",
-            )
-            session.add(match_row)
-        else:
-            match_row.match_score = round(score, 4)
-            match_row.justification = justification
-
-        await session.flush()
-
-        listing_detail = MatchListingDetail.model_validate(listing)
-
-        matches_out.append(
-            MatchResponse(
-                id=match_row.id,
-                listing_id=listing.id,
-                match_score=match_row.match_score,
-                justification=match_row.justification,
-                saved=match_row.saved,
-                status=match_row.status,
-                created_at=match_row.created_at,
-                listing=listing_detail,
-            )
-        )
 
     return MatchComputeResponse(computed=len(matches_out), matches=matches_out)
 
@@ -303,6 +319,8 @@ async def list_matches(
                 justification=m.justification,
                 saved=m.saved,
                 status=m.status,
+                change_alert=m.change_alert,
+                change_alert_at=m.change_alert_at,
                 created_at=m.created_at,
                 listing=listing_detail,
             )
@@ -353,6 +371,58 @@ async def toggle_save(
         justification=match_row.justification,
         saved=match_row.saved,
         status=match_row.status,
+        change_alert=match_row.change_alert,
+        change_alert_at=match_row.change_alert_at,
+        created_at=match_row.created_at,
+        listing=listing_detail,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dismiss Change Alert
+# ---------------------------------------------------------------------------
+@router.patch("/api/matches/{match_id}/dismiss-alert", response_model=MatchResponse)
+async def dismiss_match_alert(
+    match_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> MatchResponse:
+    """Clear the change_alert flag on a saved match (multi-tenant enforced)."""
+    result = await session.execute(
+        select(UserListingMatch)
+        .options(selectinload(UserListingMatch.listing))
+        .where(
+            UserListingMatch.id == match_id,
+            UserListingMatch.user_id == current_user.id,  # <-- ISOLATION
+        )
+    )
+    match_row = result.scalar_one_or_none()
+
+    if match_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Match not found.",
+        )
+
+    match_row.change_alert = None
+    match_row.change_alert_at = None
+    await session.flush()
+
+    listing_detail = (
+        MatchListingDetail.model_validate(match_row.listing)
+        if match_row.listing
+        else None
+    )
+
+    return MatchResponse(
+        id=match_row.id,
+        listing_id=match_row.listing_id,
+        match_score=match_row.match_score,
+        justification=match_row.justification,
+        saved=match_row.saved,
+        status=match_row.status,
+        change_alert=match_row.change_alert,
+        change_alert_at=match_row.change_alert_at,
         created_at=match_row.created_at,
         listing=listing_detail,
     )
