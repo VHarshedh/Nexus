@@ -23,16 +23,26 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import LoginRequest, RegisterRequest, TokenResponse
+from app.api.schemas import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    MessageResponse,
+    RegisterRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+    VerifyEmailRequest,
+)
 from app.config import get_settings
 from app.db import get_db_session
 from app.models.user import User
+from app.services.email import send_password_reset_email, send_verification_email
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +94,38 @@ def create_access_token(user_id: uuid.UUID, email: str) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def create_email_verification_token(user_id: uuid.UUID, email: str) -> str:
+    """Sign a single-use JWT for email verification (24 hr expiry)."""
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.email_verification_expire_minutes)
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "purpose": "email_verification",
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_password_reset_token(user: User) -> str:
+    """Sign a single-use JWT for password reset (10 min expiry max).
+
+    Incorporates a 16-character SHA-256 signature of the user's current hashed_password.
+    Once the password changes, any previously issued token becomes immediately invalid.
+    """
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.password_reset_expire_minutes)
+    pwd_sig = hashlib.sha256(user.hashed_password.encode("utf-8")).hexdigest()[:16]
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "pwd_sig": pwd_sig,
+        "purpose": "password_reset",
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
 # ---------------------------------------------------------------------------
 # FastAPI dependency: decode JWT -> load User from DB
 # ---------------------------------------------------------------------------
@@ -130,10 +172,10 @@ async def get_current_user(
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session),
 ) -> TokenResponse:
-    """Create a new user account and return a JWT."""
-    # Check for existing email
+    """Create a new user account, send confirmation email via Gmail SMTP, and return JWT."""
     existing = await session.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -144,17 +186,25 @@ async def register(
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
+        is_verified=False,
     )
     session.add(user)
-    await session.flush()  # populate user.id before commit
+    await session.commit()
+    await session.refresh(user)
+
+    settings = get_settings()
+    verify_token = create_email_verification_token(user.id, user.email)
+    verify_url = f"{settings.frontend_url}/verify-email?token={verify_token}"
+    background_tasks.add_task(send_verification_email, user.email, verify_url)
 
     token = create_access_token(user.id, user.email)
-    logger.info("User registered: %s", user.email)
+    logger.info("User registered (unverified): %s", user.email)
 
     return TokenResponse(
         access_token=token,
         user_id=str(user.id),
         email=user.email,
+        is_verified=False,
     )
 
 
@@ -173,6 +223,12 @@ async def login(
             detail="Invalid email or password.",
         )
 
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email address before signing in.",
+        )
+
     token = create_access_token(user.id, user.email)
     logger.info("User logged in: %s", user.email)
 
@@ -180,4 +236,166 @@ async def login(
         access_token=token,
         user_id=str(user.id),
         email=user.email,
+        is_verified=True,
     )
+
+
+@router.post("/verify-email", response_model=MessageResponse)
+async def verify_email(
+    body: VerifyEmailRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    """Verify a user's account using the token dispatched to their email."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            body.token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+        if payload.get("purpose") != "email_verification":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email verification token.",
+            )
+        user_id_str: str | None = payload.get("sub")
+        if not user_id_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email verification token.",
+            )
+        user_id = uuid.UUID(user_id_str)
+    except (JWTError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification link is invalid or has expired.",
+        )
+
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User account not found.",
+        )
+
+    if not user.is_verified:
+        user.is_verified = True
+        await session.flush()
+        logger.info("User email successfully verified: %s", user.email)
+
+    return MessageResponse(
+        message="Your email address has been verified successfully. You may now sign in."
+    )
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+async def resend_verification(
+    body: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    """Resend verification email to an unverified user account."""
+    result = await session.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if user and not user.is_verified:
+        settings = get_settings()
+        verify_token = create_email_verification_token(user.id, user.email)
+        verify_url = f"{settings.frontend_url}/verify-email?token={verify_token}"
+        background_tasks.add_task(send_verification_email, user.email, verify_url)
+        logger.info("Resent verification email for: %s", user.email)
+
+    # Return constant message to prevent email enumeration
+    return MessageResponse(
+        message="If an unverified account exists with this email, a new confirmation link has been sent."
+    )
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    """Request a password reset link. Dispatches email via Gmail SMTP (10 min expiry)."""
+    result = await session.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if user and user.is_verified:
+        settings = get_settings()
+        reset_token = create_password_reset_token(user)
+        reset_url = f"{settings.frontend_url}/reset-password?token={reset_token}"
+        background_tasks.add_task(send_password_reset_email, user.email, reset_url)
+        logger.info("Dispatched password reset email for: %s", user.email)
+    elif user and not user.is_verified:
+        # Prompt user to verify account if they haven't verified yet
+        logger.info("Forgot password requested for unverified user %s; dispatching verification email", user.email)
+        settings = get_settings()
+        verify_token = create_email_verification_token(user.id, user.email)
+        verify_url = f"{settings.frontend_url}/verify-email?token={verify_token}"
+        background_tasks.add_task(send_verification_email, user.email, verify_url)
+
+    # Constant generic message to avoid email enumeration
+    return MessageResponse(
+        message="If an account exists with this email, instructions to reset your password have been sent."
+    )
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    body: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    """Reset user password using single-use signed token (max 10 min expiry)."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            body.token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+        if payload.get("purpose") != "password_reset":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid password reset token.",
+            )
+        user_id_str: str | None = payload.get("sub")
+        pwd_sig: str | None = payload.get("pwd_sig")
+        if not user_id_str or not pwd_sig:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid password reset token.",
+            )
+        user_id = uuid.UUID(user_id_str)
+    except (JWTError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password reset link is invalid or has expired (10-minute limit).",
+        )
+
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User account not found.",
+        )
+
+    # Single-use guarantee: verify token was created for the current password hash
+    current_sig = hashlib.sha256(user.hashed_password.encode("utf-8")).hexdigest()[:16]
+    if current_sig != pwd_sig:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This password reset link has already been used or invalidated. Please request a new one.",
+        )
+
+    user.hashed_password = hash_password(body.new_password)
+    user.is_verified = True  # Verified by virtue of email-token possession
+    await session.flush()
+    logger.info("Password successfully reset for: %s", user.email)
+
+    return MessageResponse(
+        message="Your password has been reset successfully. You may now sign in with your new password."
+    )
+

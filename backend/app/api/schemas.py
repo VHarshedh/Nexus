@@ -48,6 +48,41 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user_id: str
     email: str
+    is_verified: bool = True
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_complexity(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Password cannot be empty.")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must include at least one letter.")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must include at least one number.")
+        if not any(not c.isalnum() and not c.isspace() for c in v):
+            raise ValueError("Password must include at least one symbol (e.g. !@#$%^&*).")
+        return v
+
+
+class MessageResponse(BaseModel):
+    message: str
 
 
 # ---------------------------------------------------------------------------

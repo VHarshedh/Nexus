@@ -8,7 +8,7 @@ interface AuthContextValue {
   user: AuthState | null;
   isLoading: boolean;
   login: (data: LoginRequest) => Promise<void>;
-  register: (data: RegisterRequest) => Promise<void>;
+  register: (data: RegisterRequest) => Promise<TokenResponse>;
   logout: () => void;
 }
 
@@ -35,15 +35,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(authState);
   }, []);
 
-  const register = useCallback(async (data: RegisterRequest) => {
+  const register = useCallback(async (data: RegisterRequest): Promise<TokenResponse> => {
     const res = await api.post<TokenResponse>('/api/auth/register', data);
-    const authState: AuthState = {
-      accessToken: res.data.access_token,
-      userId: res.data.user_id,
-      email: res.data.email,
-    };
-    setAuth(authState);
-    setUser(authState);
+    if (res.data.is_verified) {
+      const authState: AuthState = {
+        accessToken: res.data.access_token,
+        userId: res.data.user_id,
+        email: res.data.email,
+      };
+      setAuth(authState);
+      setUser(authState);
+    }
+    return res.data;
   }, []);
 
   const logout = useCallback(() => {

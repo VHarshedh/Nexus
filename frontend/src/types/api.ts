@@ -16,6 +16,7 @@ export interface TokenResponse {
   token_type: string;
   user_id: string;
   email: string;
+  is_verified?: boolean;
 }
 
 /** Mirrors backend ResumeResponse */

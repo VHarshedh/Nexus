@@ -21,9 +21,11 @@ robotexclusionrulesparser>=1.7,<2.0
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.34,<1.0
 
-# -- Authentication ---------------------------
+# -- Authentication & Email -------------------
 python-jose[cryptography]>=3.3,<4.0
 python-multipart>=0.0.9
+aiosmtplib>=3.0,<4.0
+email-validator>=2.0,<3.0
 
 # -- PDF Parsing ------------------------------
 pdfplumber>=0.11,<1.0

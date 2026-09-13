@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
 
+    # -- Email & Password Reset (Gmail SMTP) ----------------------------------
+    # Loaded directly from .env (GMAIL_USER, GMAIL_APP_PASSWORD, FRONTEND_URL)
+    gmail_user: str = ""
+    gmail_app_password: str = ""
+    frontend_url: str = "http://localhost:3000"
+    password_reset_expire_minutes: int = 10  # 10 minutes max per security policy
+    email_verification_expire_minutes: int = 1440  # 24 hours
+
     # -- Scraping politeness --------------------------------------------------
     scrape_delay_min: float = 2.0
     scrape_delay_max: float = 5.0
@@ -72,6 +80,15 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     project_root: Path = _BACKEND_DIR
+
+    @property
+    def all_cors_origins(self) -> list[str]:
+        origins = list(self.cors_origins)
+        if self.frontend_url:
+            clean = self.frontend_url.rstrip("/")
+            if clean and clean not in origins:
+                origins.append(clean)
+        return origins
 
 
 @lru_cache(maxsize=1)
