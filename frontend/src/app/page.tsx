@@ -11,7 +11,6 @@ import {
   ExternalLink,
   ShieldCheck,
   Cpu,
-  Layers,
   TrendingUp,
   Briefcase,
   MapPin,

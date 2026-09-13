@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import type { MatchResponse } from '@/types/api';
+import type { BriefingJobResponse, MatchResponse } from '@/types/api';
 import { cn, formatDate, formatMatchScore } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import {
@@ -18,6 +19,9 @@ import {
   BarChart3,
   Filter,
   SortAsc,
+  Video,
+  Play,
+  Sparkles,
 } from 'lucide-react';
 
 type SortKey = 'score' | 'company' | 'deadline';
@@ -32,6 +36,11 @@ export default function ShortlistPage() {
   const { data: allMatches, isLoading } = useQuery<MatchResponse[]>({
     queryKey: ['matches'],
     queryFn: async () => (await api.get('/api/matches/')).data,
+  });
+
+  const { data: briefings } = useQuery<BriefingJobResponse[]>({
+    queryKey: ['briefings'],
+    queryFn: async () => (await api.get('/api/briefings/')).data,
   });
 
   const unsaveMutation = useMutation({
@@ -299,6 +308,88 @@ export default function ShortlistPage() {
           </p>
         </div>
       )}
+
+      {/* Past Briefings Section */}
+      <div className="space-y-4 pt-6 border-t border-nexus-border">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <Video className="w-5 h-5 text-nexus-accent" />
+              Past Career Briefings
+            </h2>
+            <p className="text-nexus-text-muted text-sm mt-0.5">
+              Audio and video briefings generated from your top matches
+            </p>
+          </div>
+          <Link
+            href="/briefings"
+            className="nexus-btn-secondary text-xs flex items-center gap-1.5"
+          >
+            <Sparkles size={14} className="text-nexus-accent" />
+            Generate New Briefing
+          </Link>
+        </div>
+
+        {briefings && briefings.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {briefings.slice(0, 4).map((b) => (
+              <div key={b.id} className="nexus-card space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-nexus-text-dim">
+                    {formatDate(b.created_at)}
+                  </span>
+                  <span
+                    className={cn(
+                      'px-2 py-0.5 text-xs rounded-full font-medium',
+                      b.status === 'done'
+                        ? 'bg-nexus-success/15 text-nexus-success'
+                        : b.status === 'failed'
+                        ? 'bg-nexus-danger/15 text-nexus-danger'
+                        : 'bg-nexus-accent/15 text-nexus-accent animate-pulse-slow',
+                    )}
+                  >
+                    {b.status === 'done' ? 'Ready' : b.status}
+                  </span>
+                </div>
+
+                {b.script && (
+                  <p className="text-xs text-nexus-text-muted line-clamp-2 italic">
+                    &ldquo;{b.script}&rdquo;
+                  </p>
+                )}
+
+                {b.media_url && (
+                  <div className="pt-2">
+                    {b.media_url.endsWith('.mp3') ? (
+                      <audio
+                        controls
+                        className="w-full h-8"
+                        preload="none"
+                        src={
+                          b.media_url.startsWith('http')
+                            ? b.media_url
+                            : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${b.media_url}`
+                        }
+                      />
+                    ) : (
+                      <Link
+                        href="/briefings"
+                        className="nexus-btn-ghost w-full justify-center text-xs flex items-center gap-1.5"
+                      >
+                        <Play size={14} className="text-nexus-accent" /> Play Avatar Video
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="nexus-card text-center py-6">
+            <p className="text-xs text-nexus-text-dim">No briefings generated yet.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

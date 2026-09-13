@@ -249,11 +249,13 @@ async def synthesize_video_heygen(script: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 2c. D-ID Video Synthesis (Alternative Avatar Video -- Free Trial / Credits)
+# 2c. D-ID Expressive Video Synthesis (Mia Avatar -- Transparent Background WebM)
 # ---------------------------------------------------------------------------
 async def synthesize_video_did(script: str) -> str | None:
-    """Send the script to D-ID Talks API and poll until the video is ready.
+    """Send the script to D-ID Expressives API and poll until the video is ready.
 
+    Creates an expressive talking-head video with Mia's avatar and a transparent
+    background (result_format: webm) to prevent any watermarked / text background.
     Returns the public video URL on success, or None on failure.
     """
     settings = get_settings()
@@ -274,57 +276,59 @@ async def synthesize_video_did(script: str) -> str | None:
         "Content-Type": "application/json",
     }
 
+    avatar_id = getattr(settings, "did_avatar_id", "public_mia_elegant@avt_TJ0Tq5")
+    # Resolve shorthand "mia" or "mia_elegant" to the specific model ID
+    if avatar_id.lower() in ("mia", "mia_elegant"):
+        avatar_id = "public_mia_elegant@avt_TJ0Tq5"
+
     payload = {
-        "source_url": "https://create-images-results.d-id.com/DefaultPresenters/Emma_f/image.jpeg",
+        "avatar_id": avatar_id,
         "script": {
             "type": "text",
-            "subtitles": "false",
-            "provider": {
-                "type": "microsoft",
-                "voice_id": "en-US-JennyNeural",
-            },
             "input": script,
         },
         "config": {
-            "fluent": "false",
-            "pad_audio": "0.0",
+            "background": {
+                "type": "transparent",
+            },
+            "result_format": "webm",
         },
     }
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://api.d-id.com/talks",
+                "https://api.d-id.com/expressives",
                 headers=headers,
                 json=payload,
             )
             resp.raise_for_status()
             data = resp.json()
-            talk_id = data.get("id")
-            if not talk_id:
-                logger.error("[d-id] No talk_id returned: %s", data)
+            expressive_id = data.get("id")
+            if not expressive_id:
+                logger.error("[d-id] No id returned: %s", data)
                 return None
 
-            logger.info("[d-id] Video submitted: %s", talk_id)
+            logger.info("[d-id] Expressive video submitted: %s (avatar: %s)", expressive_id, avatar_id)
 
             for _ in range(60):
                 await asyncio.sleep(5)
                 status_resp = await client.get(
-                    f"https://api.d-id.com/talks/{talk_id}",
+                    f"https://api.d-id.com/expressives/{expressive_id}",
                     headers=headers,
                 )
                 status_data = status_resp.json()
-                talk_status = status_data.get("status")
+                video_status = status_data.get("status")
 
-                if talk_status == "done":
+                if video_status == "done":
                     video_url = status_data.get("result_url")
-                    logger.info("[d-id] Video ready: %s", video_url)
+                    logger.info("[d-id] Expressive video ready: %s", video_url)
                     return video_url
-                elif talk_status == "error":
-                    logger.error("[d-id] Video generation error: %s", status_data.get("error"))
+                elif video_status in ("error", "failed"):
+                    logger.error("[d-id] Expressive video generation error: %s", status_data.get("error"))
                     return None
 
-            logger.error("[d-id] Video generation timed out.")
+            logger.error("[d-id] Expressive video generation timed out.")
             return None
 
     except Exception as exc:

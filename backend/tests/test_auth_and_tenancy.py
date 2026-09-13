@@ -46,3 +46,41 @@ async def test_tenant_routes_never_expose_or_mutate_another_users_records(client
     async with session_factory() as session:
         match = await session.get(UserListingMatch, match_id)
         assert match is not None and match.saved is False
+
+
+@pytest.mark.integration
+async def test_unauthenticated_endpoints_strictly_rejected(client):
+    """Verify that all user-scoped API endpoints require authenticated JWT Bearer tokens."""
+    unauth_endpoints = [
+        ("GET", "/api/resume/"),
+        ("POST", "/api/matches/compute"),
+        ("GET", "/api/matches/"),
+        ("POST", "/api/briefings/generate"),
+        ("GET", f"/api/briefings/{uuid.uuid4()}"),
+        ("POST", "/api/agent/chat"),
+    ]
+    for method, path in unauth_endpoints:
+        if method == "GET":
+            res = await client.get(path)
+        elif method == "POST":
+            res = await client.post(path, json={})
+        assert res.status_code == 401, f"{method} {path} returned {res.status_code}, expected 401"
+
+
+@pytest.mark.integration
+async def test_cross_tenant_url_id_tampering_always_returns_404(client, users):
+    """Verify hostile client-provided UUIDs in URLs return 404 without leaking data or mutating state."""
+    user_a, _ = users
+    headers = authorization(user_a["access_token"])
+    random_id = uuid.uuid4()
+
+    # Tampered briefing ID
+    res = await client.get(f"/api/briefings/{random_id}", headers=headers)
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Briefing job not found."
+
+    # Tampered match ID toggle
+    res = await client.patch(f"/api/matches/{random_id}/save", headers=headers)
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Match not found."
+

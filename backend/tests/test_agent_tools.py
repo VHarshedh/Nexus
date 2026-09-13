@@ -66,3 +66,68 @@ async def test_gemini_function_call_is_dispatched_and_returned_to_model(monkeypa
     assert reply == "Python is your top skill."
     assert tool_calls == ["get_top_skills_breakdown"]
     assert dispatched[0][:3] == ("get_top_skills_breakdown", {}, user_id)
+
+
+@pytest.mark.asyncio
+async def test_agent_tools_enforce_user_id_in_sql_predicates():
+    """Verify that every tool querying personal data enforces user_id in the SQL WHERE clause."""
+    from app.agent.tools import (
+        tool_get_deadline_alerts,
+        tool_get_top_skills_breakdown,
+        tool_query_saved_listings,
+    )
+
+    user_id = uuid.uuid4()
+    session = Session([])
+
+    await tool_query_saved_listings(user_id, session)
+    stmt_sql = str(session.statements[0])
+    assert "user_listing_matches.user_id = :user_id_1" in stmt_sql
+
+    session = Session([])
+    await tool_get_top_skills_breakdown(user_id, session)
+    stmt_sql = str(session.statements[0])
+    assert "user_listing_matches.user_id = :user_id_1" in stmt_sql
+
+    session = Session([])
+    await tool_get_deadline_alerts(user_id, session)
+    stmt_sql = str(session.statements[0])
+    assert "user_listing_matches.user_id = :user_id_1" in stmt_sql
+
+
+@pytest.mark.asyncio
+async def test_tool_search_all_listings_filtering():
+    """Verify tool_search_all_listings handles query, remote filter, and high paying priority."""
+    from app.agent.tools import tool_search_all_listings
+
+    jobs = [
+        SimpleNamespace(
+            title="Senior Go Developer",
+            company="CloudCorp",
+            location="Remote",
+            remote_ok=True,
+            stipend="$150k - $180k",
+            required_skills=["Go", "Kubernetes"],
+            source_name="weworkremotely",
+            source_url="https://example.test/1",
+            deadline="2026-10-01",
+        ),
+        SimpleNamespace(
+            title="Junior Analyst",
+            company="DataInc",
+            location="NYC",
+            remote_ok=False,
+            stipend="Not specified",
+            required_skills=["Excel"],
+            source_name="remoteok",
+            source_url="https://example.test/2",
+            deadline=None,
+        ),
+    ]
+
+    session = Session(jobs)
+    res = await tool_search_all_listings(session, query="Go", filter_remote=True, high_paying_only=True)
+    assert res["count"] == 2
+    assert res["listings"][0]["title"] == "Senior Go Developer"
+    assert res["listings"][0]["stipend"] == "$150k - $180k"
+

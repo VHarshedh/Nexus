@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -81,6 +81,20 @@ class JobListing(Base):
     # ── Extra indexes ────────────────────────────────────────────────────
     __table_args__ = (
         Index("ix_job_listings_source_name", "source_name"),
+        Index(
+            "ix_job_listings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_job_listings_tsv",
+            text(
+                "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(company, '') || ' ' || coalesce(raw_text, ''))"
+            ),
+            postgresql_using="gin",
+        ),
     )
 
     def __repr__(self) -> str:

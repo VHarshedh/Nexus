@@ -103,21 +103,34 @@ function LegacyStatusStepper({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 function MediaPlayer({ mediaUrl, script }: { mediaUrl: string; script: string | null }) {
   const [showScript, setShowScript] = useState(false);
-  const fullUrl = `${API_BASE}${mediaUrl}`;
-  const isVideo = mediaUrl.includes('video') || mediaUrl.endsWith('.mp4') || mediaUrl.endsWith('.webm');
+  const fullUrl = mediaUrl.startsWith('http') ? mediaUrl : `${API_BASE}${mediaUrl}`;
+  const isVideo =
+    mediaUrl.includes('.mp4') ||
+    mediaUrl.includes('.webm') ||
+    mediaUrl.includes('video') ||
+    mediaUrl.includes('d-id') ||
+    mediaUrl.includes('heygen');
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl overflow-hidden bg-black">
+      <div className="rounded-xl overflow-hidden bg-nexus-surface-2/60 border border-nexus-border flex items-center justify-center relative">
         {isVideo ? (
-          <video controls className="w-full max-h-[400px]" preload="metadata">
-            <source src={fullUrl} />
+          <video
+            controls
+            playsInline
+            className="w-full max-h-[460px] aspect-video object-contain"
+            preload="metadata"
+          >
+            <source
+              src={fullUrl}
+              type={fullUrl.includes('.webm') ? 'video/webm' : 'video/mp4'}
+            />
             Your browser does not support the video element.
           </video>
         ) : (
-          <div className="p-6">
+          <div className="p-6 w-full">
             <audio controls className="w-full" preload="metadata">
-              <source src={fullUrl} />
+              <source src={fullUrl} type="audio/mpeg" />
               Your browser does not support the audio element.
             </audio>
           </div>
@@ -211,11 +224,29 @@ export default function BriefingsPage() {
   const queryClient = useQueryClient();
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
-  // Fetch all briefings
+  // Fetch all briefings with automatic polling whenever any job is in flight
   const { data: briefings, isLoading: listLoading } = useQuery<BriefingJobResponse[]>({
     queryKey: ['briefings'],
     queryFn: async () => (await api.get('/api/briefings/')).data,
+    refetchInterval: (query) => {
+      const hasInFlight = query.state.data?.some(
+        (b) => b.status === 'queued' || b.status === 'generating_script' || b.status === 'synthesizing_media'
+      );
+      return hasInFlight || !!activeJobId ? 3000 : false;
+    },
   });
+
+  // Automatically attach to any in-flight job if user refreshed mid-generation
+  useEffect(() => {
+    if (!activeJobId && briefings) {
+      const inFlight = briefings.find(
+        (b) => b.status === 'queued' || b.status === 'generating_script' || b.status === 'synthesizing_media'
+      );
+      if (inFlight) {
+        setActiveJobId(inFlight.id);
+      }
+    }
+  }, [activeJobId, briefings]);
 
   // Poll active job
   const { data: activeJob, error: activeJobError } = useQuery<BriefingJobResponse>({
@@ -231,14 +262,19 @@ export default function BriefingsPage() {
     },
   });
 
-  // Stop polling and refresh list when done/failed or reset on error
+  // Handle active job completion / failure
   useEffect(() => {
     if (activeJobError) {
       setActiveJobId(null);
-    } else if (activeJob && (activeJob.status === 'done' || activeJob.status === 'failed')) {
-      if (activeJob.status === 'done') toast.success('Briefing ready!');
-      if (activeJob.status === 'failed') toast.error('Briefing generation failed.');
+    } else if (activeJob) {
+      // Invalidate list so past briefings stays in lockstep with generation progress
       queryClient.invalidateQueries({ queryKey: ['briefings'] });
+      if (activeJob.status === 'done') {
+        toast.success('Briefing ready!');
+      }
+      if (activeJob.status === 'failed') {
+        toast.error('Briefing generation failed.');
+      }
     }
   }, [activeJob, activeJobError, queryClient]);
 
@@ -254,7 +290,16 @@ export default function BriefingsPage() {
 
   const isGenerating =
     generateMutation.isPending ||
-    (activeJob && activeJob.status !== 'done' && activeJob.status !== 'failed');
+    (activeJob && activeJob.status !== 'done' && activeJob.status !== 'failed') ||
+    briefings?.some(
+      (b) => b.status === 'queued' || b.status === 'generating_script' || b.status === 'synthesizing_media'
+    );
+
+  // Determine latest completed briefing for hero display
+  const latestBriefing =
+    (activeJob?.status === 'done' && activeJob.media_url ? activeJob : null) ||
+    briefings?.find((b) => b.status === 'done' && b.media_url) ||
+    null;
 
   return (
     <div className="space-y-8">
@@ -296,14 +341,14 @@ export default function BriefingsPage() {
         </div>
       )}
 
-      {/* Active Job Result */}
-      {activeJob && activeJob.status === 'done' && activeJob.media_url && (
+      {/* Latest Briefing Hero Card (displayed when not actively generating) */}
+      {!isGenerating && latestBriefing && latestBriefing.media_url && (
         <div className="nexus-card">
           <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-nexus-accent" />
             Latest Briefing
           </h2>
-          <MediaPlayer mediaUrl={activeJob.media_url} script={activeJob.script} />
+          <MediaPlayer mediaUrl={latestBriefing.media_url} script={latestBriefing.script} />
         </div>
       )}
 

@@ -50,8 +50,9 @@ class Settings(BaseSettings):
     heygen_api_key: str = ""
 
     # -- D-ID API (optional free-tier avatar video alternative) ---------------
-    # Loaded directly from .env (DID_API_KEY)
+    # Loaded directly from .env (DID_API_KEY, DID_AVATAR_ID)
     did_api_key: str = ""
+    did_avatar_id: str = "public_mia_elegant@avt_TJ0Tq5"
 
     # -- Adzuna API (optional free developer keys with mandatory salary data) --
     # Loaded directly from .env (ADZUNA_APP_ID, ADZUNA_APP_KEY)

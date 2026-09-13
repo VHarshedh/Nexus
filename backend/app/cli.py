@@ -176,33 +176,45 @@ def stats() -> None:
 @cli.command()
 @click.argument("resume_text")
 @click.option("--top-k", "-k", default=10, help="Number of results.")
-def search(resume_text: str, top_k: int) -> None:
-    """Test semantic search: find listings similar to RESUME_TEXT."""
+@click.option("--hybrid", is_flag=True, default=False, help="Use hybrid search (full-text + vector with RRF).")
+def search(resume_text: str, top_k: int, hybrid: bool) -> None:
+    """Test semantic or hybrid search: find listings matching RESUME_TEXT."""
     from app.db import get_session
-    from app.pipeline.embeddings import find_similar_listings, generate_embedding
+    from app.pipeline.embeddings import (
+        find_hybrid_listings,
+        find_similar_listings,
+        generate_embedding,
+    )
 
     async def _search() -> None:
         console.print(f"[cyan]Generating embedding for query text...[/cyan]")
         embedding = await generate_embedding(resume_text)
-        if embedding is None:
-            console.print("[red]Failed to generate embedding.[/red]")
-            return
 
         async with get_session() as session:
-            results = await find_similar_listings(embedding, session, top_k=top_k)
+            if hybrid:
+                console.print(f"[magenta]Running Hybrid Retrieval (PostgreSQL GIN Full-Text + pgvector HNSW via RRF)...[/magenta]")
+                results = await find_hybrid_listings(resume_text, embedding, session, top_k=top_k)
+                score_label = "RRF Score"
+            else:
+                if embedding is None:
+                    console.print("[red]Failed to generate embedding.[/red]")
+                    return
+                results = await find_similar_listings(embedding, session, top_k=top_k)
+                score_label = "Distance"
 
         if not results:
             console.print("[yellow]No matching listings found.[/yellow]")
             return
 
-        table = Table(title=f"Top {top_k} Matches", show_header=True, header_style="bold magenta")
+        title_prefix = "Hybrid" if hybrid else "Semantic"
+        table = Table(title=f"Top {top_k} {title_prefix} Matches", show_header=True, header_style="bold magenta")
         table.add_column("#", style="dim", width=4)
         table.add_column("Title", style="cyan")
         table.add_column("Company", style="green")
-        table.add_column("Distance", justify="right", style="yellow")
+        table.add_column(score_label, justify="right", style="yellow")
 
-        for i, (listing, dist) in enumerate(results, 1):
-            table.add_row(str(i), listing.title or "?", listing.company or "?", f"{dist:.4f}")
+        for i, (listing, score) in enumerate(results, 1):
+            table.add_row(str(i), listing.title or "?", listing.company or "?", f"{score:.4f}")
 
         console.print(table)
 

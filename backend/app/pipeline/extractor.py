@@ -205,6 +205,8 @@ class ListingExtractor:
                         system_instruction=_SYSTEM_PROMPT,
                         temperature=0.1,
                         max_output_tokens=1024,
+                        response_mime_type="application/json",
+                        response_schema=ExtractedListing,
                     ),
                 )
 

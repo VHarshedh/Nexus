@@ -27,6 +27,7 @@ from google import genai
 from google.genai import types
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.auth import get_current_user
 from app.api.schemas import (
@@ -285,6 +286,7 @@ async def list_matches(
     """List all matches for the authenticated user, sorted by score."""
     result = await session.execute(
         select(UserListingMatch)
+        .options(selectinload(UserListingMatch.listing))
         .where(UserListingMatch.user_id == current_user.id)
         .order_by(UserListingMatch.match_score.desc())
     )
@@ -292,13 +294,7 @@ async def list_matches(
 
     matches_out: list[MatchResponse] = []
     for m in match_rows:
-        # Eagerly load the listing
-        listing_result = await session.execute(
-            select(JobListing).where(JobListing.id == m.listing_id)
-        )
-        listing = listing_result.scalar_one_or_none()
-        listing_detail = MatchListingDetail.model_validate(listing) if listing else None
-
+        listing_detail = MatchListingDetail.model_validate(m.listing) if m.listing else None
         matches_out.append(
             MatchResponse(
                 id=m.id,
@@ -326,7 +322,9 @@ async def toggle_save(
 ) -> MatchResponse:
     """Toggle the 'saved' flag on a match (multi-tenant enforced)."""
     result = await session.execute(
-        select(UserListingMatch).where(
+        select(UserListingMatch)
+        .options(selectinload(UserListingMatch.listing))
+        .where(
             UserListingMatch.id == match_id,
             UserListingMatch.user_id == current_user.id,  # <-- ISOLATION
         )
@@ -342,4 +340,19 @@ async def toggle_save(
     match_row.saved = not match_row.saved
     await session.flush()
 
-    return MatchResponse.model_validate(match_row)
+    listing_detail = (
+        MatchListingDetail.model_validate(match_row.listing)
+        if match_row.listing
+        else None
+    )
+
+    return MatchResponse(
+        id=match_row.id,
+        listing_id=match_row.listing_id,
+        match_score=match_row.match_score,
+        justification=match_row.justification,
+        saved=match_row.saved,
+        status=match_row.status,
+        created_at=match_row.created_at,
+        listing=listing_detail,
+    )

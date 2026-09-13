@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Sequence
 
 from google import genai
@@ -199,3 +200,105 @@ async def find_similar_listings(
     rows = result.all()
 
     return [(row[0], float(row[1])) for row in rows]
+
+
+async def find_hybrid_listings(
+    query_text: str | None,
+    query_embedding: list[float] | None,
+    session: AsyncSession,
+    *,
+    top_k: int = 20,
+    rrf_k: int = 60,
+) -> list[tuple[JobListing, float]]:
+    """
+    Perform hybrid retrieval combining PostgreSQL full-text search (BM25-style
+    tsvector/tsquery with GIN index) and pgvector semantic cosine similarity,
+    fusing the two ranked result sets using Reciprocal Rank Fusion (RRF).
+
+    Formula:
+        RRF_score(d) = SUM_{m in sources} (1 / (rrf_k + rank_m(d)))
+
+    Parameters
+    ----------
+    query_text : str | None
+        User's raw keyword search string (e.g. "Golang distributed systems").
+    query_embedding : list[float] | None
+        768-dim embedding vector representing the semantic meaning of the query.
+    session : AsyncSession
+        Active SQLAlchemy database session.
+    top_k : int
+        Number of final fused results to return.
+    rrf_k : int
+        Smoothing constant for Reciprocal Rank Fusion (standard default = 60).
+
+    Returns
+    -------
+    list[tuple[JobListing, float]]
+        Pairs of (JobListing, composite_rrf_score) sorted by descending score.
+    """
+    if not query_text and not query_embedding:
+        return []
+
+    scores: dict[uuid.UUID, float] = {}
+    candidate_limit = max(top_k * 3, 50)
+
+    # 1. Semantic Vector Search
+    if query_embedding:
+        vector_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+        vec_stmt = (
+            select(
+                JobListing.id,
+                text(f"embedding <=> '{vector_str}'::vector AS cosine_dist"),
+            )
+            .where(JobListing.embedding.isnot(None))
+            .order_by(text("cosine_dist"))
+            .limit(candidate_limit)
+        )
+        vec_res = await session.execute(vec_stmt)
+        for rank, row in enumerate(vec_res.all(), start=1):
+            item_id = row[0]
+            scores[item_id] = scores.get(item_id, 0.0) + (1.0 / (rrf_k + rank))
+
+    # 2. Full-Text Keyword Search
+    if query_text and query_text.strip():
+        clean_query = query_text.strip()
+        tsv_expr = "to_tsvector('english', coalesce(title, '') || ' ' || coalesce(company, '') || ' ' || coalesce(raw_text, ''))"
+        ft_stmt = (
+            select(
+                JobListing.id,
+                text(f"ts_rank({tsv_expr}, plainto_tsquery('english', :q_text)) AS rank_score"),
+            )
+            .where(text(f"{tsv_expr} @@ plainto_tsquery('english', :q_text)"))
+            .params(q_text=clean_query)
+            .order_by(text("rank_score DESC"))
+            .limit(candidate_limit)
+        )
+        try:
+            ft_res = await session.execute(ft_stmt)
+            for rank, row in enumerate(ft_res.all(), start=1):
+                item_id = row[0]
+                scores[item_id] = scores.get(item_id, 0.0) + (1.0 / (rrf_k + rank))
+        except Exception as exc:
+            logger.warning("[embeddings] Full-text search failed for query %r: %s", clean_query, exc)
+
+    if not scores:
+        return []
+
+    # Sort all candidates by descending RRF score
+    sorted_ids_with_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    target_ids = [item_id for item_id, _ in sorted_ids_with_scores]
+    id_to_score = dict(sorted_ids_with_scores)
+
+    # Fetch corresponding JobListing models in bulk
+    listings_stmt = select(JobListing).where(JobListing.id.in_(target_ids))
+    listings_res = await session.execute(listings_stmt)
+    listings_by_id = {listing.id: listing for listing in listings_res.scalars().all()}
+
+    # Preserve sorted order
+    results: list[tuple[JobListing, float]] = []
+    for item_id in target_ids:
+        if item_id in listings_by_id:
+            results.append((listings_by_id[item_id], id_to_score[item_id]))
+
+    return results
+
