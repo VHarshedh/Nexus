@@ -156,6 +156,7 @@ async def find_similar_listings(
     session: AsyncSession,
     *,
     top_k: int = 20,
+    preferences: dict | None = None,
 ) -> list[tuple[JobListing, float]]:
     """
     Find the *top_k* job listings most similar to *resume_embedding* using
@@ -186,6 +187,8 @@ async def find_similar_listings(
     # doesn't have native operator support for <=>.
     vector_str = "[" + ",".join(str(v) for v in resume_embedding) + "]"
 
+    candidate_limit = max(top_k * 5, 100) if preferences else top_k
+
     stmt = (
         select(
             JobListing,
@@ -193,13 +196,64 @@ async def find_similar_listings(
         )
         .where(JobListing.embedding.isnot(None))
         .order_by(text("cosine_dist"))
-        .limit(top_k)
+        .limit(candidate_limit)
     )
 
     result = await session.execute(stmt)
     rows = result.all()
 
-    return [(row[0], float(row[1])) for row in rows]
+    if not preferences:
+        return [(row[0], float(row[1])) for row in rows]
+
+    from app.api.system import matches_min_stipend
+
+    scored_candidates = []
+    for row in rows:
+        listing = row[0]
+        base_dist = float(row[1])
+        bonus = 0.0
+
+        # Soft constraints
+        pref_loc = preferences.get("location_preference")
+        if pref_loc == "remote" and listing.remote_ok:
+            bonus += 0.1
+        elif pref_loc in ("onsite", "hybrid") and listing.location:
+            locs = preferences.get("locations", [])
+            for l in locs:
+                city = l.get("city", "").lower() if l.get("city") else ""
+                state = l.get("state", "").lower() if l.get("state") else ""
+                country = l.get("country", "").lower() if l.get("country") else ""
+                list_loc = listing.location.lower()
+                if (city and city in list_loc) or (state and state in list_loc) or (country and country in list_loc):
+                    bonus += 0.1
+                    break
+
+        pref_stipend = preferences.get("min_stipend")
+        if pref_stipend and listing.stipend:
+            if matches_min_stipend(listing.stipend, pref_stipend):
+                bonus += 0.15
+        elif pref_stipend and not listing.stipend:
+            bonus -= 0.05
+
+        pref_roles = preferences.get("target_roles", [])
+        if pref_roles and listing.title:
+            for r in pref_roles:
+                if r.lower() in listing.title.lower():
+                    bonus += 0.1
+                    break
+        
+        pref_role_categories = preferences.get("role_preference", [])
+        if pref_role_categories and listing.title:
+            for cat in pref_role_categories:
+                if cat.lower() in listing.title.lower():
+                    bonus += 0.05
+                    break
+
+        adjusted_dist = max(0.0, base_dist - bonus)
+        scored_candidates.append((listing, adjusted_dist))
+
+    scored_candidates.sort(key=lambda x: x[1])
+    return scored_candidates[:top_k]
 
 
 async def find_hybrid_listings(

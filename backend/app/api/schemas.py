@@ -49,6 +49,33 @@ class TokenResponse(BaseModel):
     user_id: str
     email: str
     is_verified: bool = True
+    onboarded: bool = False
+
+
+class UserPreferencesSchema(BaseModel):
+    target_roles: list[str] = Field(default_factory=list)
+    seniority: str | None = None
+    location_preference: str | None = None
+    locations: list[dict] = Field(default_factory=list)
+    min_stipend: str | None = None
+    role_preference: list[str] = Field(default_factory=list)
+
+
+class UserPreferencesUpdateRequest(BaseModel):
+    preferences: UserPreferencesSchema
+
+
+class UserProfileResponse(BaseModel):
+    user_id: str
+    email: str
+    is_verified: bool
+    onboarded: bool
+    preferences: UserPreferencesSchema | None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class VerifyEmailRequest(BaseModel):

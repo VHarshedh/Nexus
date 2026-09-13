@@ -169,8 +169,15 @@ async def refresh_user_matches(
     if resume is None:
         return []
 
+    # -- Fetch user preferences -----------------------------------------------
+    user_res = await session.execute(select(User).where(User.id == user_id))
+    user = user_res.scalar_one_or_none()
+    preferences = user.preferences if user else None
+
     # -- Semantic search via pgvector -----------------------------------------
-    similar = await find_similar_listings(resume.embedding, session, top_k=top_k)
+    similar = await find_similar_listings(
+        resume.embedding, session, top_k=top_k, preferences=preferences
+    )
     if not similar:
         return []
 

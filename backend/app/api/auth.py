@@ -38,6 +38,9 @@ from app.api.schemas import (
     ResetPasswordRequest,
     TokenResponse,
     VerifyEmailRequest,
+    UserPreferencesUpdateRequest,
+    UserProfileResponse,
+    ChangePasswordRequest,
 )
 from app.config import get_settings
 from app.db import get_db_session
@@ -205,6 +208,7 @@ async def register(
         user_id=str(user.id),
         email=user.email,
         is_verified=False,
+        onboarded=user.onboarded,
     )
 
 
@@ -237,6 +241,7 @@ async def login(
         user_id=str(user.id),
         email=user.email,
         is_verified=True,
+        onboarded=user.onboarded,
     )
 
 
@@ -398,4 +403,71 @@ async def reset_password(
     return MessageResponse(
         message="Your password has been reset successfully. You may now sign in with your new password."
     )
+
+
+@router.patch("/preferences", response_model=MessageResponse)
+async def update_preferences(
+    body: UserPreferencesUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """Update the user's onboarding preferences."""
+    current_user.preferences = body.preferences.model_dump()
+    current_user.onboarded = True
+    await session.commit()
+    logger.info("Preferences updated and onboarded for user: %s", current_user.email)
+    
+    return MessageResponse(
+        message="Preferences saved successfully."
+    )
+
+
+@router.get("/me", response_model=UserProfileResponse)
+async def get_my_profile(
+    current_user: User = Depends(get_current_user),
+) -> UserProfileResponse:
+    """Get the current user's profile and preferences."""
+    return UserProfileResponse(
+        user_id=str(current_user.id),
+        email=current_user.email,
+        is_verified=current_user.is_verified,
+        onboarded=current_user.onboarded,
+        preferences=current_user.preferences,
+    )
+
+
+@router.put("/password", response_model=MessageResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """Change the current user's password."""
+    # Verify current password
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect current password.",
+        )
+    
+    # Save new password
+    current_user.hashed_password = hash_password(body.new_password)
+    await session.commit()
+    logger.info("Password changed by user: %s", current_user.email)
+
+    return MessageResponse(message="Password successfully updated.")
+
+
+@router.delete("/me", response_model=MessageResponse)
+async def delete_my_account(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """Permanently delete the user account and all associated data."""
+    email = current_user.email
+    await session.delete(current_user)
+    await session.commit()
+    logger.warning("Account deleted permanently: %s", email)
+
+    return MessageResponse(message="Account successfully deleted.")
 
