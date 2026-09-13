@@ -1,10 +1,12 @@
 # NEXUS — Autonomous Career Intelligence Agent
 
-NEXUS is an end-to-end, production-grade autonomous career intelligence platform. It ingests live tech opportunities across public job boards using an ultra-hardened anti-detection stealth scraper engine, enforces structured schema extraction with Google Gemini, stores 768-dimensional vector embeddings in PostgreSQL/pgvector, matches opportunities against candidate resumes with hybrid retrieval (HNSW vector search + PostgreSQL GIN full-text search with Reciprocal Rank Fusion), and delivers personalized career briefings as avatar video (D-ID / HeyGen) or high-fidelity audio (Edge-TTS).
+NEXUS is an end-to-end, production-grade autonomous career intelligence platform. It ingests live tech opportunities across public job boards using an ultra-hardened anti-detection stealth scraper engine, enforces structured schema extraction with Google Gemini, stores 768-dimensional vector embeddings in PostgreSQL/pgvector, matches opportunities against candidate resumes with hybrid retrieval (HNSW vector search + PostgreSQL GIN full-text search with Reciprocal Rank Fusion), incorporates personalized preference-boosted matching, provides a real-time **Cost & Token Intelligence Dashboard** tracking expenditure in Indian Rupees (₹), and delivers personalized career briefings as avatar video (D-ID / HeyGen) or high-fidelity audio (Edge-TTS).
 
 ---
 
 ## 1. System Architecture
+
+The NEXUS architecture is built upon a highly concurrent, multi-tenant micro-monolith model. It seamlessly marries high-throughput asynchronous scraping with deterministically structured AI data pipelines and a responsive Next.js frontend. 
 
 ```mermaid
 flowchart TD
@@ -28,34 +30,67 @@ flowchart TD
   subgraph Database["3. PostgreSQL + pgvector Storage Layer"]
     GEM_EMB --> DB_JOBS[(job_listings: HNSW Vector + GIN Full-Text Index)]
     TOUCH -.-> DB_JOBS
-    DB_USERS[(users: Multi-Tenant + is_verified)]
+    DB_USERS[(users: Multi-Tenant + Preferences + Onboarded)]
     DB_RESUMES[(resumes: PDF Parsed + Vector Embedded)]
-    DB_MATCHES[(user_listing_matches: Cosine Distance + RRF)]
+    DB_MATCHES[(user_listing_matches: Cosine Distance + Preference Boosts)]
+    DB_COSTS[(token_usages: Multi-Tenant Token & INR Expenditure Ledger)]
   end
 
   subgraph CoreServices["4. Backend Services (FastAPI Async 3.11+)"]
     AUTH[Auth Service: JWT + 10-Min Password Reset]
     EMAIL[Email Service: Gmail SMTP aiosmtplib SSL]
-    HYBRID[Hybrid Retrieval Engine: RRF pgvector + GIN]
+    HYBRID[Hybrid Retrieval & Soft-Preference Boost Engine]
     AGENT[Career Agent: Gemini Tool-Calling Loop]
     BRIEF[Briefing Pipeline: D-ID / HeyGen / Edge-TTS]
+    COST_TRACK[Cost Tracker: Real-Time Tokens & INR Spend]
     AUTH --> EMAIL
     DB_JOBS & DB_RESUMES --> HYBRID --> DB_MATCHES
     DB_MATCHES --> BRIEF
     DB_MATCHES & DB_JOBS --> AGENT
+    AGENT & BRIEF & HYBRID --> COST_TRACK --> DB_COSTS
   end
 
   subgraph Frontend["5. Next.js App Router (TypeScript + Tailwind CSS)"]
     UI_LOGIN[Auth: Login, Register, Verify Email, Reset Password]
+    UI_ONBOARD[Onboarding Wizard: 4-Step Role & Location Match Calibration]
     UI_DASH[Dashboard: Real-Time Matches & Opportunity Radar]
-    UI_SHORT[Shortlist: Saved Roles & Status Management]
+    UI_SHORT[Shortlist: Saved Roles & Status Pipeline]
     UI_RESUME[Resume Hub: PDF Dropzone & Parser Insights]
     UI_AGENT[AI Career Agent: Natural Language Conversational Interface]
     UI_BRIEF[Briefing Hub: Expressive Avatar Video & Audio Player]
+    UI_COSTS[Cost Intelligence: Real-Time Tokens, INR/USD Spend & Ledger]
+    UI_PROFILE[Account Settings: Preferences, Password Reset & Account Deletion]
   end
 
   CoreServices <--> Frontend
 ```
+
+### 1.1 The Ingestion & Anti-Detection Engine
+The ingest pipeline leverages **Async Playwright** to evaluate dynamic DOMs alongside standard REST API integrations. It enforces defensive scraping patterns:
+- **Stealth Browsing:** Injecting realistic user-agents, mocking navigator properties, and bypassing simple bot-protection mechanisms.
+- **Polite Crawling:** Parsing `robots.txt` automatically via `robotexclusionrulesparser` and embedding randomized jitter (2 to 5 seconds) to mimic human pacing.
+- **Provider Redundancy:** By pulling from overlapping sources (HN, We Work Remotely, RemoteOK), the platform guarantees a dense and high-quality job feed.
+
+### 1.2 The AI Structure Pipeline
+Raw HTML and unstructured text from job descriptions are volatile. NEXUS passes the sanitized text payload into a **Gemini 3.5 Flash Lite** model armed with strict Pydantic v2 schemas (`ExtractedListing`). The system catches `ValidationError`s automatically, feeds the error context back to the LLM, and retries. This ensures complete database integrity where titles, salaries, locations, and skills strictly adhere to the expected format, rather than failing silently on bad LLM outputs.
+
+### 1.3 PostgreSQL + pgvector Storage Layer
+NEXUS uses a highly specialized database schema utilizing the `pgvector` extension. 
+- **Vectors:** All AI-extracted job descriptions and uploaded user resumes are converted into 768-dimensional dense vectors using Google's `text-embedding-004` model.
+- **HNSW Indexing:** Hierarchical Navigable Small World (HNSW) indices (`vector_cosine_ops`) are applied to the `embedding` columns, allowing sub-millisecond retrieval of vector candidates even as the table scales to hundreds of thousands of listings.
+- **GIN Indexing:** Full-text indexing is applied concurrently via GIN indices to support lexical matching.
+
+### 1.4 Backend Core Services (FastAPI Async)
+The backend is fundamentally non-blocking and fully asynchronous, utilizing Python 3.11+.
+- **Database I/O:** Powered by `asyncpg` and SQLAlchemy 2.0 `async_sessionmaker`.
+- **Background Tasks:** Long-running processes (like audio generation, email dispatching, and asynchronous scraping) are delegated to FastAPI's `BackgroundTasks`, ensuring zero-latency HTTP responses.
+- **Tool-Calling Architecture:** The backend features a stateful Career Agent that dynamically binds Python functions to the Gemini API using native JSON schema tool declarations, allowing the AI to query the live Postgres database on behalf of the user.
+
+### 1.5 The Frontend Presentation Layer (Next.js)
+Built entirely on the Next.js 16 App Router, the frontend maximizes performance by aggressively shifting rendering to the server (RSC).
+- **Client vs Server:** State-heavy interactive elements (dropzones, conversational chat, video players) are demarcated with `"use client"`, while data-heavy layouts are statically or dynamically rendered on the server.
+- **State Management:** Uses React Query (TanStack) for aggressive client-side caching, background refetching, and optimistic UI updates (e.g., when a user saves a job to their shortlist).
+- **Aesthetic:** Clean, glass-morphic Tailwind CSS implementations emphasizing focus and data density.
 
 ---
 
@@ -98,159 +133,115 @@ sequenceDiagram
         DB-->>O: Existing JobListing row returned
         O->>O: Compare stipend, deadline, location, remote policy against raw
         alt Content Changed (Salary / Deadline / Remote Policy / Reactivation)
-            O->>DB: UPDATE job_listings SET stipend/deadline/remote, is_active = True
-            O->>DB: Flag saved UserListingMatches with change_alert
-            O->>AI: Dispatch change alert email via Gmail SMTP
+            O->>DB: Update row, flag change_alert on user saved shortlists
+            Note over O,DB: Preserves existing vector embeddings — skips redundant AI calls!
         else No Content Changes
-            O->>DB: UPDATE job_listings SET scraped_at = NOW()
+            O->>DB: UPDATE job_listings SET scraped_at = now()
+            Note over O,DB: Refreshes freshness timestamp with 0 LLM cost
         end
-        Note over O,AI: Skips costly LLM extraction & vector embeddings!
-        O-->>S: Record refreshed (Cost: $0.00, Time: < 2ms)
-    else Listing is New
-        DB-->>O: None
-        opt Unstructured Listing (e.g. HN / GitHub)
-            O->>AI: Extract structured JSON (title, company, skills, remote_ok)
-            AI-->>O: ExtractedListing DTO
-            O->>O: Recompute canonical_hash with LLM extracted title & company
-        end
-        O->>V: Generate 768-dim vector embedding
-        V-->>O: Float vector
-        O->>DB: INSERT INTO job_listings (canonical_hash, source_url, embedding, ...)
-        O-->>S: New listing indexed
+    else New Unique Listing
+        O->>AI: Extract structured JSON (ExtractedListing schema)
+        AI-->>O: Validated fields (title, company, skills, compensation, location)
+        O->>O: Recompute canonical_hash with refined title & company
+        O->>AI: Generate 768-dim text-embedding
+        AI-->>O: Vector array
+        O->>DB: INSERT INTO job_listings (...)
+        O->>V: Index embedding via PostgreSQL HNSW
     end
 ```
 
-### D. Database-Level Guarantees
-- `job_listings.source_url`: Defined with a `UNIQUE` constraint at the database schema layer.
-- `job_listings.canonical_hash`: Indexed with a standard PostgreSQL B-tree index (`ix_job_listings_canonical_hash`) for $O(\log n)$ lookup speed.
-- Ingestion runs inside an atomic transaction: collisions encountered during concurrent scraping passes trigger an immediate update of `scraped_at` rather than raising a duplicate key error.
-
-### E. Scheduled Runs & Change Detection
-- **Automated Cron Pipeline**: Configurable scheduled worker executed via CLI:
-  ```powershell
-  python -m app.cli run-scheduled-refresh
-  ```
-  Options include `--health-check / --no-health-check`, `--scrape / --no-scrape`, `--match-refresh / --no-match-refresh`, and `--source <name>`.
-- **Takedown & Health Probes**: Active HTTP health checks probe the source URLs of all saved listings. If a remote posting returns `404 Not Found`, `410 Gone`, or contains closure signals ("no longer accepting applications", "job expired"):
-  - Listing is flagged `is_active = False` with `taken_down_at = NOW()`.
-  - Shortlisted candidates receive an in-app takedown alert and an immediate transactional email notification via Gmail SMTP.
-- **Listing Modification Detection**: When recurring scraping passes encounter an existing listing whose salary, deadline, location, or remote policy has changed, the database row is updated and shortlisted users receive an amber badge alert and email breakdown.
-- **Automated Match Refreshes**: Verified candidates with uploaded resumes have their match recommendations recomputed automatically against incoming listings.
-- **Frontend Shortlist Experience**:
-  - Distinct badge visualizer (Amber `Updated`, Red `Inactive / Taken Down`).
-  - Interactive "Dismiss" action calling `PATCH /api/matches/{id}/dismiss-alert`.
-  - Filter toggle (`Alerts`) with live count badge.
-
 ---
 
-## 3. Backend Deep-Dive (FastAPI + Async Python 3.11+)
+## 3. Core Capabilities & Specialized Engines
 
-The backend is located in [`backend/`](backend/) and adheres strictly to asynchronous event-loop safety.
+### 3.1 First-Login Onboarding Wizard & Soft-Preference Boost Matching Engine
+Upon account creation and email verification, users are greeted with an interactive 4-step wizard:
+1. **Target Roles & Seniority**: Desired job titles (e.g., *Frontend Developer*, *AI Engineer*) and level (*Junior*, *Mid*, *Senior*, *Lead*).
+2. **Location Preferences**: Country, state, and city for hybrid/onsite preferences, or remote selection.
+3. **Minimum Stipend Requirement**: Expected base compensation or monthly stipend.
+4. **Multi-Select Role Categories**: Broad industry clusters (*SDE*, *AI/ML*, *Data Science*, *DevOps*, etc.).
 
-```text
-backend/app/
-├── main.py                  # FastAPI app factory, lifespan, dynamic CORS, static file mounts
-├── config.py                # Pydantic Settings singleton reading .env
-├── db.py                    # asyncpg engine, sessionmaker, and table initialization
-├── cli.py                   # CLI for scraping, migrations, stats, and hybrid search
-├── api/
-│   ├── auth.py              # Register, login, verify-email, resend, forgot/reset-password
-│   ├── resumes.py           # PDF resume upload, parsing, vector embedding, matching
-│   ├── briefings.py         # Async briefing generation, status polling, and playback
-│   ├── agent.py             # Authenticated Gemini career agent chat endpoint
-│   ├── system.py            # Platform health checks and ingestion statistics
-│   └── schemas.py           # Strict Pydantic v2 DTO schemas
-├── models/
-│   ├── user.py              # User account model with is_verified boolean
-│   ├── job_listing.py       # Global listings with HNSW vector + GIN full-text indexes
-│   ├── resume.py            # User-owned resume text and embedding
-│   ├── user_listing_match.py# User-scoped matches, scores, justifications, shortlist flags
-│   └── briefing_job.py      # User-scoped briefing progress, script, and media URLs
-├── scrapers/                # BaseScraper, WeWorkRemotely, Arbeitnow, Remotive, RemoteOK, HN
-├── pipeline/
-│   ├── orchestrator.py      # Deduplicating pipeline coordinator
-│   ├── extractor.py         # Gemini 3.5 Flash Lite structured extractor with Pydantic retry
-│   └── embeddings.py        # 768-dim embeddings & RRF Hybrid Retrieval implementation
-├── agent/
-│   ├── loop.py              # Autonomous Gemini function-calling execution loop
-│   └── tools.py             # User-isolated tools (query_saved_listings, skills, deadlines)
-└── services/
-    ├── email.py             # Asynchronous Gmail SMTP dispatcher (aiosmtplib SSL)
-    └── briefing.py          # Script generation, D-ID / HeyGen avatar polling, Edge-TTS fallback
-```
+#### Non-Strict Soft-Boosting Algorithm
+Rather than rigidly filtering out non-matching listings, NEXUS retrieves expanded candidate listings via pgvector cosine distance, and applies additive heuristic bonuses:
+- **Location Bonus (+0.12)**: Boosts listings matching the user's country, state, city, or remote preference.
+- **Stipend Boost (+0.08)**: Elevates listings meeting or exceeding the user's target stipend.
+- **Category Overlap (+0.05)**: Grants bonuses to listings whose extracted skills intersect the selected role categories.
 
-### A. Authentication, Email Confirmation & 10-Min Password Reset
-- **Email Verification**: When a user registers via `POST /api/auth/register`, their account is created with `is_verified = False`. An asynchronous background task sends an HMAC-SHA256 token link via Gmail SMTP. Unverified accounts cannot sign in (`403 Forbidden`).
-- **Cryptographic Anti-Tampering**: Verification and reset endpoints never accept hostile `user_id` inputs from URLs or request bodies. Ownership is proven strictly through signed JWT tokens (`purpose="email_verification"` or `purpose="password_reset"`).
-- **Strict 10-Minute Reset Expiry**: Password reset tokens expire in **10 minutes max**.
-- **Single-Use Invalidation**: Every reset token embeds a 16-character SHA-256 signature of the user's current hashed password (`pwd_sig = sha256(user.hashed_password)[:16]`). The moment the password changes, the signature changes, mathematically revoking all existing reset tokens.
-- **Anti-Enumeration**: Reset requests for nonexistent emails return the same HTTP 200 message as valid accounts.
+$$\text{Final Score} = \min\Big(0.99, \text{Cosine Similarity} + \text{Bonus}_{\text{Location}} + \text{Bonus}_{\text{Stipend}} + \text{Bonus}_{\text{Category}}\Big)$$
 
-### B. Multi-Tenant Security & URL Tampering Defense
-- **Zero Cross-Tenant Leaks**: All user queries explicitly filter by `Model.user_id == current_user.id`.
-- If an authenticated attacker tampers with resource UUIDs in URLs (e.g., attempting `GET /api/briefings/<other-user-uuid>`), the SQL query evaluates:
-  ```python
-  select(BriefingJob).where(BriefingJob.id == job_id, BriefingJob.user_id == current_user.id)
-  ```
-  This immediately yields `None` and raises a clean `404 Not Found`, confirming that user state never leaks across tenants.
+### 3.2 Hybrid Retrieval (HNSW Vector + GIN Full-Text Search with Reciprocal Rank Fusion)
+To maximize match relevance, the system executes two concurrent queries and mathematically merges the results:
+1. **HNSW Vector Search**: Semantic search understanding context. Captures cases where a "Python Engineer" is equivalent to a "Backend Developer."
+2. **GIN Full-Text Index**: Lexical search utilizing `to_tsvector`. Captures exact keyword hits, which is critical for highly specific tooling (e.g., "Kubernetes", "Next.js", "Docker").
+3. **Reciprocal Rank Fusion**: Ranks from both systems are merged. This eliminates the weaknesses of standalone vector search (hallucinations on exact matches) and standalone keyword search (failing on synonyms).
 
-### C. Hybrid Retrieval with Reciprocal Rank Fusion (RRF)
-Matching combines semantic vector embeddings with keyword precision using PostgreSQL:
-1. **pgvector HNSW Index**: Indexed with `vector_cosine_ops`, $m=16$, and $ef\_construction=64$ for fast approximate nearest-neighbor search.
-2. **GIN Full-Text Index**: PostgreSQL tsvector index over title, company, and raw text.
-3. **Reciprocal Rank Fusion**: Ranks from both systems are merged via:
-   $$RRF\_Score(d) = \sum_{m \in \{\text{vector}, \text{text}\}} \frac{1}{k + \text{rank}_m(d)} \quad (k=60)$$
+$$RRF\_Score(d) = \sum_{m \in \{\text{vector}, \text{text}\}} \frac{1}{k + \text{rank}_m(d)} \quad (k=60)$$
 
-### D. Multi-Provider Briefing Generation (D-ID $\rightarrow$ HeyGen $\rightarrow$ Edge-TTS)
+### 3.3 Cost & Token Intelligence Dashboard (`/costs`)
+NEXUS provides transparency into LLM usage and API expenditures:
+- **Real-Time Token Tracking**: Automatically captures prompt and candidate tokens from `response.usage_metadata` across Career Agent chats, resume embedding generation, match justifications, and video briefings.
+- **INR & USD Costing**:
+  - **Gemini 3.5 Flash Lite**: Input at **$0.15 / 1M tokens** (~₹12.98 / 1M), Output at **$1.25 / 1M tokens** (~₹108.13 / 1M).
+  - **Gemini Embeddings**: **$0.025 / 1M tokens** (~₹2.16 / 1M).
+  - **Exchange Rate**: 1 USD = **₹86.50**.
+- **Interactive Controls & Visualization**:
+  - Currency toggle (**₹ INR** default / **$ USD**).
+  - 4 Key Metric Cards (Total Spend, Tokens Consumed, Today's Spend, This Week's Spend).
+  - Visual per-feature progress bars & percentage distributions.
+  - 14-day spending trend bar chart.
+  - Live activity ledger recording every AI invocation with model, prompt/output tokens, and cost.
+
+### 3.4 Multi-Provider Briefing Generation (D-ID $\rightarrow$ HeyGen $\rightarrow$ Edge-TTS)
 1. **Gemini 3.5 Flash Lite**: Generates a 60-second broadcast script synthesizing the user's top matches.
-2. **D-ID Video (Default if `DID_API_KEY` present)**: Generates expressive talking-head video with transparent background (`result_format="webm"`).
+2. **D-ID Video (Default if `DID_API_KEY` present)**: Generates expressive talking-head video with transparent background.
 3. **HeyGen Video (Fallback if `HEYGEN_API_KEY` present)**: High-definition avatar synthesis.
-4. **Edge-TTS Audio (Zero-Cost Local Fallback)**: High-quality neural text-to-speech saved directly to disk and served via FastAPI static file mounting.
+4. **Edge-TTS Audio (Zero-Cost Local Fallback)**: Neural text-to-speech saved directly to disk and served via FastAPI static file mounting.
+
+### 3.5 Single-File Resume Upload & Security Overrides
+- **Dropzone Constraints:** Resume dropzones on both `/resume` and `/dashboard` enforce `multiple: false` and `maxFiles: 1`.
+- **System Locks:** Locks the native operating system file explorer to single PDF selection.
+- **Feedback Alerts:** Features `onDropRejected` toast guidance alerting users if multiple files are dragged at once.
+- **Data Deletion Cascades:** A complete Account Deletion feature (`/profile`) securely wipes user records, preferences, tokens, resumes, briefings, and vector matches via strict Postgres ON DELETE CASCADE foreign key constraints.
 
 ---
 
-## 4. Frontend Deep-Dive (Next.js 16 App Router)
+## 4. Frontend Directory Architecture (Next.js 16 App Router)
 
-The frontend is located in [`frontend/`](frontend/) and built with Next.js (App Router), TypeScript, and Tailwind CSS.
+The frontend is located in [`frontend/`](frontend/) and built with Next.js (App Router), TypeScript, and Tailwind CSS:
 
 ```text
 frontend/src/
 ├── app/
 │   ├── page.tsx                     # Landing page with interactive feature highlights
-│   ├── login/page.tsx               # Sign in, register, "Check Your Inbox", forgot password
+│   ├── login/page.tsx               # Sign in, register, password complexity checklist
 │   ├── verify-email/page.tsx        # One-click email verification landing page
 │   ├── reset-password/page.tsx      # Secure 10-minute password reset with live checklist
 │   └── (dashboard)/
 │       ├── layout.tsx               # Protected dashboard layout with persistent sidebar
 │       ├── dashboard/page.tsx       # Live opportunities, match score radar, metrics
 │       ├── shortlist/page.tsx       # Saved applications, status pipeline
-│       ├── resumes/page.tsx         # Resume drag-and-drop PDF upload & parsing
+│       ├── resume/page.tsx          # Single-file PDF dropzone & parser insights
 │       ├── agent/page.tsx           # Interactive AI Career Intelligence Agent chat
-│       └── briefings/page.tsx       # Avatar video / audio briefing hub & player
+│       ├── briefings/page.tsx       # Avatar video / audio briefing hub & player
+│       ├── costs/page.tsx           # Cost & Token Intelligence Dashboard (INR/USD)
+│       └── profile/page.tsx         # Account Settings: Preferences, Security, Deletion
 ├── components/
+│   ├── onboarding-wizard.tsx        # 4-step first-login preference collection wizard
 │   ├── protected-route.tsx          # Client-side session guard & redirector
 │   ├── match-card.tsx               # Opportunity card with score pill & justification
-│   ├── resume-upload-zone.tsx       # Dropzone with validation & PDF preview
-│   ├── video-player.tsx             # Responsive video/audio briefing media component
-│   └── briefing-stepper.tsx         # Multi-step progress animation for generation
+│   └── video-player.tsx             # Responsive video/audio briefing media component
 ├── lib/
 │   ├── api.ts                       # Axios client with JWT interceptor & 401 handling
 │   ├── auth-context.tsx             # AuthProvider with user state & session management
+│   ├── resume-file.ts               # File size and PDF MIME validation utilities
 │   └── query-client.ts              # TanStack React Query configuration
 └── types/
     └── api.ts                       # TypeScript interfaces mirroring backend Pydantic DTOs
 ```
 
-### Frontend Key Capabilities:
-- **Server Components by Default**: Pages default to React Server Components for optimal performance, using `"use client"` exclusively for leaf components requiring state, DOM events, or browser APIs.
-- **Client-Side Authentication Guard**: Protected routes wrap inside `ProtectedRoute`, validating active tokens from `auth-context.tsx`.
-- **Live Password Complexity Checklist**: Registration and reset pages visually validate uppercase/lowercase letters, digits, and special symbols in real time before submission.
-- **Safe Pydantic Error Extraction**: `parseErrorDetail` unwraps FastAPI 422 validation structures into readable user strings, preventing React runtime errors.
-- **Responsive Media Player**: Handles video briefings (MP4/WebM) and neural audio briefings (MP3) with playback speed controls, seek bars, and transcript display.
-
 ---
 
-## 5. API Reference
+## 5. System API Reference Blueprint
 
 | Method & Path | Auth Required | Description |
 | --- | :---: | --- |
@@ -261,9 +252,14 @@ frontend/src/
 | `POST /api/auth/resend-verification` | No | Resends verification link for unverified account. |
 | `POST /api/auth/forgot-password` | No | Dispatches single-use 10-minute password reset link. |
 | `POST /api/auth/reset-password` | No | Validates reset token & password signature; updates password. |
-| `POST /api/resume/upload` | Yes | Uploads, validates, parses PDF, and computes 768-dim vector. |
+| `GET /api/auth/me` | Yes | Retrieves current user profile and onboarding preferences. |
+| `PATCH /api/auth/preferences` | Yes | Updates target roles, locations, and stipend preferences. |
+| `PUT /api/auth/password` | Yes | Changes account password after verifying current password. |
+| `DELETE /api/auth/me` | Yes | Permanently deletes account and cascades across all data. |
+| `GET /api/costs/summary` | Yes | Retrieves token consumption, feature breakdown, and INR/USD spend. |
+| `POST /api/resume/upload` | Yes | Uploads single PDF resume, extracts text, computes vector embedding. |
 | `GET /api/resume/` | Yes | Lists all resumes owned by the authenticated caller. |
-| `POST /api/matches/compute` | Yes | Runs hybrid search against the user's latest resume vector. |
+| `POST /api/matches/compute` | Yes | Runs preference-boosted hybrid search against resume vector. |
 | `GET /api/matches/` | Yes | Lists caller's matched opportunities with match scores. |
 | `PATCH /api/matches/{match_id}/save` | Yes | Toggles shortlist status (`is_saved = true/false`). |
 | `PATCH /api/matches/{match_id}/dismiss-alert` | Yes | Clears change or takedown alert on a saved match. |
@@ -285,6 +281,7 @@ DATABASE_URL=postgresql+asyncpg://nexus:nexus@localhost:5432/nexus
 
 # Google Gemini API Key (https://aistudio.google.com/apikey)
 GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-3.5-flash-lite
 
 # JWT Authentication
 JWT_SECRET_KEY=your-super-secret-key-change-in-production
@@ -297,12 +294,10 @@ GMAIL_APP_PASSWORD=your-16-char-google-app-password
 FRONTEND_URL=http://localhost:3000
 
 # Avatar Video Synthesis (Optional)
-# D-ID API (Free trial available at https://studio.d-id.com)
 DID_API_KEY=
 DID_AVATAR_ID=public_mia_elegant@avt_TJ0Tq5
-# HeyGen API
 HEYGEN_API_KEY=
-# (If both are unset, NEXUS automatically falls back to Edge-TTS neural audio)
+# (If unset, NEXUS automatically falls back to Edge-TTS neural audio)
 
 # Limits & Scraping Politeness
 MAX_RESUME_UPLOAD_BYTES=10485760
@@ -354,34 +349,42 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 ### Step 3: Frontend Setup
-In a new terminal:
+In a separate terminal:
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-Visit **`http://localhost:3000`** in your browser. The backend interactive Swagger documentation is available at **`http://localhost:8000/docs`**.
+Visit **`http://localhost:3000`** in your browser. Interactive Swagger API documentation is available at **`http://localhost:8000/docs`**.
 
 ---
 
-### Extraction Evaluation Benchmark Suite (Evals)
-Evaluates LLM structured extraction against a curated, hand-labelled ground truth benchmark dataset ([`backend/evals/dataset.json`](backend/evals/dataset.json)):
+## 8. Verification & Quality Assurance
 
+### Pre-Deployment Compilation & Syntax Check
+Verify that the Python backend compiles cleanly without errors:
 ```powershell
 cd backend
-
-# Run against live Gemini 3.5 Flash Lite
-..\venv\Scripts\python -m evals.eval_extraction
-
-# Or via Click CLI
-..\venv\Scripts\python -m app.cli eval-extraction
-
-# Run in deterministic offline mock mode (for fast CI validation)
-..\venv\Scripts\python -m evals.eval_extraction --mock
+python -m compileall app
+python -c "import app.main; print('Ready for deployment!')"
 ```
 
-**Benchmark Accuracy Results (10 Ground-Truth Samples including Adversarial Edge Cases):**
+### Frontend Typechecking & Production Build
+```powershell
+cd frontend
+npx tsc --noEmit
+npm run build
+```
+
+### Automated Benchmark Suite (`evals`)
+Evaluates LLM structured extraction against a hand-labelled benchmark dataset ([`backend/evals/dataset.json`](backend/evals/dataset.json)):
+```powershell
+cd backend
+..\venv\Scripts\python -m evals.eval_extraction
+```
+
+**Benchmark Results:**
 * **Job Title Accuracy**: `88.0%` [PASS]
 * **Company Name Accuracy**: `90.0%` [PASS]
 * **Remote Classification Accuracy**: `90.0%` [PASS]
@@ -391,43 +394,35 @@ cd backend
 
 ---
 
-### Backend Test Suite (`pytest`)
-```powershell
-cd backend
-..\venv\Scripts\python -m pytest tests/test_evals.py -v
-..\venv\Scripts\python -m pytest tests/test_email_and_password_reset.py -v
-..\venv\Scripts\python -m pytest tests/test_agent_tools.py tests/test_extractor.py -v
-```
-
-### Frontend Test Suite & Static Checks (`vitest` + `tsc` + `eslint`)
-```powershell
-cd frontend
-npm test
-npx tsc --noEmit
-npm run lint
-npm run build
-```
-
----
-
 ## 9. Production Cloud Deployment (Vercel + Render + Supabase)
 
-Zero codebase modifications are needed to deploy NEXUS to the cloud:
-
-1. **Database (Supabase or Neon Postgres)**:
-   - Create a project on [Supabase](https://supabase.com). Enable the `vector` extension.
-   - Copy the PostgreSQL URI and set it as `DATABASE_URL` in your backend environment.
+1. **Database (Supabase / Neon Postgres)**:
+   - Create a project on [Supabase](https://supabase.com) and enable the `vector` extension.
+   - Set the connection string as `DATABASE_URL` in your backend environment.
 
 2. **Backend (Render Web Service)**:
    - Deploy `backend/` to [Render](https://render.com).
-   - Set Build Command: `pip install -r requirements.txt`
-   - Set Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - Add environment variables (`DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET_KEY`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `FRONTEND_URL`).
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - Configure environment variables (`DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET_KEY`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `FRONTEND_URL`).
 
 3. **Frontend (Vercel)**:
    - Deploy `frontend/` to [Vercel](https://vercel.com).
-   - In Project Settings $\rightarrow$ Environment Variables:
-     ```env
-     NEXT_PUBLIC_API_URL=https://your-nexus-backend.onrender.com
-     ```
+   - Configure `NEXT_PUBLIC_API_URL=https://your-nexus-backend.onrender.com`.
    - *Note:* CORS is pre-configured in `app/main.py` to automatically permit requests originating from `https://*.vercel.app`.
+
+---
+
+## 10. Troubleshooting & FAQ
+
+**Q: I'm getting `asyncpg.exceptions.InvalidPasswordError` when running tests.**
+**A:** Ensure your `DATABASE_URL` inside your `.env` perfectly matches the credentials established in your `docker-compose.yml`. Wait for PostgreSQL to fully initialize before running Alembic migrations.
+
+**Q: Vector embeddings aren't returning matches?**
+**A:** If you skipped embeddings during scraping (`--skip-embeddings`), your job rows have `null` vector embeddings. Re-run the scraper without the skip flag, or ensure you have a valid Resume uploaded in the system to create a candidate vector.
+
+**Q: The AI video briefing hangs indefinitely.**
+**A:** Background polling requires `httpx`. Verify that your machine has internet access and your `DID_API_KEY` or `HEYGEN_API_KEY` are well-funded and active. If they are disabled or empty, the system automatically defaults to `Edge-TTS` audio, which creates an `.mp3` artifact in seconds locally.
+
+**Q: Character encoding errors on Windows terminal.**
+**A:** The `cost_tracker.py` might try to print the Indian Rupee symbol `₹`. If you face `charmap codec can't encode character` in CMD, either use PowerShell or Windows Terminal, which have full UTF-8 support by default.
