@@ -34,6 +34,7 @@ from app.agent.tools import (
     tool_search_all_listings,
 )
 from app.config import get_settings
+from app.services.cost_tracker import record_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,8 @@ async def run_agent_turn(
     )
 
     tools_called: list[str] = []
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
 
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         logger.debug("[agent] Round %d, sending %d content parts", round_num, len(contents))
@@ -247,9 +250,24 @@ async def run_agent_turn(
             ),
         )
 
+        # Track token usage metadata
+        if getattr(response, "usage_metadata", None):
+            total_prompt_tokens += getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+            total_completion_tokens += getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
         # Check if the response has function calls
         candidate = response.candidates[0] if response.candidates else None
         if candidate is None:
+            if total_prompt_tokens > 0 or total_completion_tokens > 0:
+                await record_token_usage(
+                    session=session,
+                    user_id=user_id,
+                    feature="career_agent",
+                    model="gemini-3.5-flash-lite",
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    meta={"tools_called": tools_called, "rounds": round_num},
+                )
             return "I'm sorry, I couldn't generate a response.", tools_called
 
         parts = candidate.content.parts if candidate.content else []
@@ -263,6 +281,17 @@ async def run_agent_turn(
             final_text = "\n".join(text_parts).strip()
             if not final_text:
                 final_text = "I don't have enough information to answer that. Try uploading a resume and computing matches first."
+            
+            if total_prompt_tokens > 0 or total_completion_tokens > 0:
+                await record_token_usage(
+                    session=session,
+                    user_id=user_id,
+                    feature="career_agent",
+                    model="gemini-3.5-flash-lite",
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    meta={"tools_called": tools_called, "rounds": round_num},
+                )
             return final_text, tools_called
 
         # Process each function call
@@ -297,6 +326,16 @@ async def run_agent_turn(
 
     # Safety: max rounds exceeded
     logger.warning("[agent] Max tool rounds (%d) exceeded.", MAX_TOOL_ROUNDS)
+    if total_prompt_tokens > 0 or total_completion_tokens > 0:
+        await record_token_usage(
+            session=session,
+            user_id=user_id,
+            feature="career_agent",
+            model="gemini-3.5-flash-lite",
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            meta={"tools_called": tools_called, "rounds": MAX_TOOL_ROUNDS},
+        )
     return (
         "I called several tools but couldn't fully resolve your question. "
         "Could you try rephrasing?",

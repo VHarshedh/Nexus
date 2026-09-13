@@ -47,6 +47,10 @@ function ResumeUploadZone() {
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
+      if (acceptedFiles.length > 1) {
+        toast.error('Only one file can be uploaded at a time.');
+        return;
+      }
       const file = acceptedFiles[0];
       if (!file) return;
 
@@ -82,7 +86,22 @@ function ResumeUploadZone() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected: (fileRejections) => {
+      if (fileRejections.length > 1 || fileRejections[0]?.errors.some((e) => e.code === 'too-many-files')) {
+        toast.error('Only one file can be uploaded at a time.');
+        return;
+      }
+      const error = fileRejections[0]?.errors[0];
+      if (error?.code === 'file-too-large') {
+        toast.error('File size exceeds the 10 MB limit.');
+      } else if (error?.code === 'file-invalid-type') {
+        toast.error('Only PDF files are supported.');
+      } else if (error?.message) {
+        toast.error(error.message);
+      }
+    },
     accept: { 'application/pdf': ['.pdf'] },
+    multiple: false,
     maxFiles: 1,
     maxSize: MAX_RESUME_FILE_BYTES,
     disabled: uploading,
@@ -112,7 +131,7 @@ function ResumeUploadZone() {
         ) : (
           <>
             <p className="text-nexus-text-muted">Drag & drop your resume PDF, or click to browse</p>
-            <p className="text-nexus-text-dim text-sm mt-1">PDF files only</p>
+            <p className="text-nexus-text-dim text-sm mt-1">PDF only, up to 10 MB &bull; Single file only</p>
           </>
         )}
       </div>

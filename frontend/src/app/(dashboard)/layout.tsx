@@ -12,6 +12,7 @@ import {
   FileText,
   MessageSquareText,
   Video,
+  Coins,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: '/resume', label: 'My Resume', icon: FileText },
   { href: '/agent', label: 'AI Career Agent', icon: MessageSquareText },
   { href: '/briefings', label: 'Video Briefings', icon: Video },
+  { href: '/costs', label: 'Cost Intelligence', icon: Coins },
   { href: '/profile', label: 'Account Settings', icon: UserCircle },
 ];
 

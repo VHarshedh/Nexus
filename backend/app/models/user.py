@@ -51,6 +51,9 @@ class User(Base):
     briefing_jobs: Mapped[list["BriefingJob"]] = relationship(  # type: ignore[name-defined]
         back_populates="user", cascade="all, delete-orphan"
     )
+    token_usages: Mapped[list["TokenUsage"]] = relationship(  # type: ignore[name-defined]
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

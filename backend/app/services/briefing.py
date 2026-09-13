@@ -38,6 +38,7 @@ from app.db import get_session  # <-- NOT get_db_session (request-scoped)
 from app.models.briefing_job import BriefingJob
 from app.models.job_listing import JobListing
 from app.models.user_listing_match import UserListingMatch
+from app.services.cost_tracker import record_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,19 @@ async def generate_briefing_script(
             max_output_tokens=600,
         ),
     )
+
+    if getattr(response, "usage_metadata", None):
+        async with get_session() as session:
+            await record_token_usage(
+                session=session,
+                user_id=user_id,
+                feature="video_briefing",
+                model=settings.gemini_model,
+                prompt_tokens=getattr(response.usage_metadata, "prompt_token_count", 0) or 0,
+                completion_tokens=getattr(response.usage_metadata, "candidates_token_count", 0) or 0,
+                meta={"matched_jobs": len(rows)},
+            )
+            await session.commit()
 
     return (response.text or "Your career briefing could not be generated.").strip()
 

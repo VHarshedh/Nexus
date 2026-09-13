@@ -43,6 +43,7 @@ from app.models.job_listing import JobListing
 from app.models.resume import Resume
 from app.models.user import User
 from app.models.user_listing_match import UserListingMatch
+from app.services.cost_tracker import record_token_usage
 from app.pipeline.embeddings import find_similar_listings, generate_embedding
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,18 @@ async def upload_resume(
     session.add(resume)
     await session.flush()
 
+    # Track embedding token usage (~1 token per 4 chars)
+    estimated_tokens = max(1, len(raw_text) // 4)
+    await record_token_usage(
+        session=session,
+        user_id=current_user.id,
+        feature="resume_parsing",
+        model="gemini-embedding-2",
+        prompt_tokens=estimated_tokens,
+        completion_tokens=0,
+        meta={"filename": original_name},
+    )
+
     logger.info("Resume uploaded for user %s: %s", current_user.email, safe_name)
     return ResumeResponse.model_validate(resume)
 
@@ -189,7 +202,7 @@ async def refresh_user_matches(
     # Filter listings that need new justifications (new matches or fallback text)
     listings_list = [listing for listing, _ in similar]
     justifications_map = await _generate_batch_justifications(
-        client, resume.raw_text, listings_list
+        client, resume.raw_text, listings_list, session=session, user_id=user_id
     )
 
     for listing, distance in similar:
@@ -276,6 +289,8 @@ async def _generate_batch_justifications(
     client: genai.Client,
     resume_text: str,
     listings: list[JobListing],
+    session: AsyncSession | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> dict[str, str]:
     """Generate concise 1-line match justifications for multiple listings in a single Gemini request.
 
@@ -316,6 +331,18 @@ async def _generate_batch_justifications(
                 response_mime_type="application/json",
             ),
         )
+
+        if getattr(response, "usage_metadata", None) and session and user_id:
+            await record_token_usage(
+                session=session,
+                user_id=user_id,
+                feature="match_justifications",
+                model="gemini-3.5-flash-lite",
+                prompt_tokens=getattr(response.usage_metadata, "prompt_token_count", 0) or 0,
+                completion_tokens=getattr(response.usage_metadata, "candidates_token_count", 0) or 0,
+                meta={"matched_jobs": len(listings)},
+            )
+
         if response.text:
             data = json.loads(response.text)
             if isinstance(data, dict):

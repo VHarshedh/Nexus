@@ -202,3 +202,51 @@ class AgentChatRequest(BaseModel):
 class AgentChatResponse(BaseModel):
     reply: str
     tool_calls_made: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Cost Intelligence & Token Tracking
+# ---------------------------------------------------------------------------
+class FeatureCostItem(BaseModel):
+    feature: str
+    label: str
+    tokens: int
+    cost_inr: float
+    cost_usd: float
+    call_count: int
+    percentage: float
+
+
+class DailySpendItem(BaseModel):
+    date: str
+    tokens: int
+    cost_inr: float
+    cost_usd: float
+
+
+class TokenUsageRecord(BaseModel):
+    id: str
+    feature: str
+    label: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_inr: float
+    cost_usd: float
+    created_at: str
+
+
+class CostSummaryResponse(BaseModel):
+    total_tokens: int
+    total_cost_inr: float
+    total_cost_usd: float
+    total_calls: int
+    today_tokens: int
+    today_cost_inr: float
+    this_week_tokens: int
+    this_week_cost_inr: float
+    feature_breakdown: list[FeatureCostItem] = Field(default_factory=list)
+    daily_trends: list[DailySpendItem] = Field(default_factory=list)
+    recent_logs: list[TokenUsageRecord] = Field(default_factory=list)
+

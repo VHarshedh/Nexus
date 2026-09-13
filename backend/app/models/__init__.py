@@ -24,6 +24,7 @@ from app.models.job_listing import JobListing  # noqa: E402, F401
 from app.models.resume import Resume  # noqa: E402, F401
 from app.models.user_listing_match import UserListingMatch  # noqa: E402, F401
 from app.models.briefing_job import BriefingJob  # noqa: E402, F401
+from app.models.token_usage import TokenUsage  # noqa: E402, F401
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "Resume",
     "UserListingMatch",
     "BriefingJob",
+    "TokenUsage",
 ]

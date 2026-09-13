@@ -105,12 +105,14 @@ from app.api.resumes import router as resumes_router  # noqa: E402
 from app.api.agent import router as agent_router  # noqa: E402
 from app.api.briefings import router as briefings_router  # noqa: E402
 from app.api.system import router as system_router  # noqa: E402
+from app.api.costs import router as costs_router  # noqa: E402
 
 app.include_router(system_router)
 app.include_router(auth_router)
 app.include_router(resumes_router)
 app.include_router(agent_router)
 app.include_router(briefings_router)
+app.include_router(costs_router)
 
 
 # ---------------------------------------------------------------------------

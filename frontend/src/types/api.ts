@@ -129,3 +129,47 @@ export interface ChangePasswordRequest {
   current_password: string;
   new_password: string;
 }
+
+export interface FeatureCostItem {
+  feature: string;
+  label: string;
+  tokens: number;
+  cost_inr: number;
+  cost_usd: number;
+  call_count: number;
+  percentage: number;
+}
+
+export interface DailySpendItem {
+  date: string;
+  tokens: number;
+  cost_inr: number;
+  cost_usd: number;
+}
+
+export interface TokenUsageRecord {
+  id: string;
+  feature: string;
+  label: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_inr: number;
+  cost_usd: number;
+  created_at: string;
+}
+
+export interface CostSummaryResponse {
+  total_tokens: number;
+  total_cost_inr: number;
+  total_cost_usd: number;
+  total_calls: number;
+  today_tokens: number;
+  today_cost_inr: number;
+  this_week_tokens: number;
+  this_week_cost_inr: number;
+  feature_breakdown: FeatureCostItem[];
+  daily_trends: DailySpendItem[];
+  recent_logs: TokenUsageRecord[];
+}
