@@ -101,7 +101,7 @@ Re-running scrapers across high-frequency boards must never create duplicate rec
 ### A. The Canonical Composite Hash
 Every listing is identified by a deterministic 64-character SHA-256 digest:
 
-$$\text{canonical\_hash} = \text{SHA-256}\Big(\text{normalised\_url} \mathbin{\Vert} \text{lower}(\text{trim}(\text{title})) \mathbin{\Vert} \text{lower}(\text{trim}(\text{company}))\Big)$$
+$$\mathrm{canonical\_hash} = \mathrm{SHA\text{-}256}\Big(\mathrm{normalised\_url} \mathbin{\Vert} \mathrm{lower}(\mathrm{trim}(\mathrm{title})) \mathbin{\Vert} \mathrm{lower}(\mathrm{trim}(\mathrm{company}))\Big)$$
 
 * **Why these three fields?**
   1. `normalised_url`: Uniquely identifies a listing on a specific board.
