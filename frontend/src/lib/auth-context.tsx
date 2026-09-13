@@ -10,6 +10,7 @@ interface AuthContextValue {
   login: (data: LoginRequest) => Promise<void>;
   register: (data: RegisterRequest) => Promise<TokenResponse>;
   logout: () => void;
+  updateUser: (updates: Partial<AuthState>) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -20,7 +21,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const stored = getAuth();
-    if (stored) setUser(stored);
+    if (stored) {
+      if (stored.onboarded === undefined) {
+        stored.onboarded = false;
+      }
+      setUser(stored);
+    }
     setIsLoading(false);
   }, []);
 
@@ -30,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       accessToken: res.data.access_token,
       userId: res.data.user_id,
       email: res.data.email,
+      onboarded: res.data.onboarded,
     };
     setAuth(authState);
     setUser(authState);
@@ -42,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessToken: res.data.access_token,
         userId: res.data.user_id,
         email: res.data.email,
+        onboarded: res.data.onboarded,
       };
       setAuth(authState);
       setUser(authState);
@@ -55,8 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = '/login';
   }, []);
 
+  const updateUser = useCallback((updates: Partial<AuthState>) => {
+    setUser((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updates };
+      setAuth(updated);
+      return updated;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

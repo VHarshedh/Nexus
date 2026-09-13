@@ -17,6 +17,7 @@ export interface TokenResponse {
   user_id: string;
   email: string;
   is_verified?: boolean;
+  onboarded: boolean;
 }
 
 /** Mirrors backend ResumeResponse */
@@ -104,4 +105,27 @@ export interface AuthState {
   accessToken: string;
   userId: string;
   email: string;
+  onboarded: boolean;
+}
+
+export interface UserPreferencesSchema {
+  target_roles: string[];
+  seniority: string | null;
+  location_preference: string | null;
+  locations: Array<{ country: string; state: string; city: string }>;
+  min_stipend: string | null;
+  role_preference: string[];
+}
+
+export interface UserProfileResponse {
+  user_id: string;
+  email: string;
+  is_verified: boolean;
+  onboarded: boolean;
+  preferences: UserPreferencesSchema | null;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
 }

@@ -17,7 +17,9 @@ export default function LoginPage() {
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -45,6 +47,11 @@ export default function LoginPage() {
         setForgotSent(true);
         toast.success('Password reset email dispatched!');
       } else if (isRegister) {
+        if (password !== confirmPassword) {
+          setErrorMessage('Passwords do not match.');
+          setLoading(false);
+          return;
+        }
         if (!isComplex) {
           setErrorMessage('Password must include letters, numbers, and at least one symbol (e.g. !@#$%^&*).');
           setLoading(false);
@@ -360,6 +367,34 @@ export default function LoginPage() {
                         {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
+
+                    {isRegister && (
+                      <div className="mt-4">
+                        <label className="text-sm font-medium text-nexus-text-muted mb-1.5 block">
+                          Confirm Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showConfirmPassword ? 'text' : 'password'}
+                            value={confirmPassword}
+                            onChange={(e) => {
+                              setConfirmPassword(e.target.value);
+                              if (errorMessage) setErrorMessage(null);
+                            }}
+                            className="nexus-input pr-10"
+                            placeholder="Confirm your password"
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-nexus-text-dim hover:text-nexus-text"
+                          >
+                            {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {isRegister && (
                       <div className="p-2.5 mt-2 rounded-xl bg-nexus-surface/60 border border-nexus-border space-y-1 text-[11px]">

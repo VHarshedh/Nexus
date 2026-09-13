@@ -15,15 +15,17 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  UserCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Explore Matches', icon: LayoutDashboard },
   { href: '/shortlist', label: 'My Shortlist', icon: Bookmark },
-  { href: '/resume', label: 'Resume & Profile', icon: FileText },
+  { href: '/resume', label: 'My Resume', icon: FileText },
   { href: '/agent', label: 'AI Career Agent', icon: MessageSquareText },
   { href: '/briefings', label: 'Video Briefings', icon: Video },
+  { href: '/profile', label: 'Account Settings', icon: UserCircle },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

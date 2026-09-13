@@ -8,6 +8,8 @@ import type { ResumeResponse, MatchResponse, MatchComputeResponse } from '@/type
 import { cn, formatDate, formatMatchScore, matchesMinStipend } from '@/lib/utils';
 import { MAX_RESUME_FILE_BYTES, validateResumeFile } from '@/lib/resume-file';
 import { MatchCard } from '@/components/match-card';
+import { useAuth } from '@/lib/auth-context';
+import { OnboardingWizard } from '@/components/onboarding-wizard';
 import toast from 'react-hot-toast';
 import {
   Upload,
@@ -271,6 +273,7 @@ function SkeletonCard() {
 // Main Dashboard Page
 // ---------------------------------------------------------------------------
 export default function DashboardPage() {
+  const { user, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
 
   // Filters State
@@ -381,6 +384,18 @@ export default function DashboardPage() {
     setOnlyWithStipend(false);
     setSortBy('score_desc');
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-nexus-bg flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-nexus-accent" />
+      </div>
+    );
+  }
+
+  if (user && !user.onboarded) {
+    return <OnboardingWizard />;
+  }
 
   return (
     <div className="space-y-8">
