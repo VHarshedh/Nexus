@@ -1,0 +1,162 @@
+[
+  {
+    "id": "hn_infra_senior",
+    "source": "Hacker News (Who is Hiring?)",
+    "raw_text": "Stripe | Senior Infrastructure Engineer | Remote (US, Canada) | Full-time | $185k - $240k + equity\n\nStripe is building economic infrastructure for the internet. We're looking for Senior Infrastructure Engineers to scale our core Kubernetes clusters and distributed telemetry systems.\nTech stack: Go, Kubernetes, AWS, Terraform, Kafka, Envoy, Linux.\nApply at: https://stripe.com/jobs/infra-sr",
+    "expected": {
+      "title": "Senior Infrastructure Engineer",
+      "company": "Stripe",
+      "location": "US, Canada",
+      "remote_ok": true,
+      "stipend": "$185k - $240k",
+      "required_skills": ["Go", "Kubernetes", "AWS", "Terraform", "Kafka", "Envoy", "Linux"],
+      "experience_level": "senior",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "wwr_backend_staff",
+    "source": "We Work Remotely",
+    "raw_text": "GitLab | Staff Backend Engineer (Verify) | Fully Remote (EMEA) | EUR 95,000 - 125,000\n\nGitLab is looking for a Staff Backend Engineer to join our Verify CI/CD pipeline team. You will lead the architecture of high-throughput runner services.\nRequirements:\n- 6+ years professional backend development experience\n- Strong proficiency in Python, FastAPI, and PostgreSQL\n- Experience with Docker, Redis, and asynchronous microservices\nDeadline: October 30, 2026",
+    "expected": {
+      "title": "Staff Backend Engineer",
+      "company": "GitLab",
+      "location": "EMEA",
+      "remote_ok": true,
+      "stipend": "EUR 95,000 - 125,000",
+      "required_skills": ["Python", "FastAPI", "PostgreSQL", "Docker", "Redis"],
+      "experience_level": "lead",
+      "deadline": "October 30, 2026",
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "remoteok_ml_lead",
+    "source": "RemoteOK",
+    "raw_text": "Anthropic — Lead ML Research Engineer | San Francisco, CA | Remote OK\nCompensation: $280,000 - $360,000 base + equity\n\nJoin Anthropic to lead frontier safety and alignment evaluations. You will design reinforcement learning from AI feedback (RLAIF) pipelines and optimize distributed transformer training on GPU clusters.\nMust have expertise in PyTorch, JAX, CUDA, distributed training (Megatron-LM, DeepSpeed), and LLM fine-tuning.",
+    "expected": {
+      "title": "Lead ML Research Engineer",
+      "company": "Anthropic",
+      "location": "San Francisco, CA",
+      "remote_ok": true,
+      "stipend": "$280,000 - $360,000",
+      "required_skills": ["PyTorch", "JAX", "CUDA", "Megatron-LM", "DeepSpeed"],
+      "experience_level": "lead",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "arbeitnow_junior_frontend",
+    "source": "Arbeitnow",
+    "raw_text": "Acme Health — Junior Frontend Developer\nLocation: New York, NY (Hybrid — 2 days in office)\nSalary: $70,000 - $85,000 / year\n\nWe are hiring an enthusiastic Junior Frontend Developer to build modern patient portals. Great mentorship provided!\nSkills needed:\n- TypeScript, React, Next.js, Tailwind CSS\n- Familiarity with REST APIs and Git\nNo prior full-time experience strictly required; portfolio projects welcome.",
+    "expected": {
+      "title": "Junior Frontend Developer",
+      "company": "Acme Health",
+      "location": "New York, NY",
+      "remote_ok": true,
+      "stipend": "$70,000 - $85,000",
+      "required_skills": ["TypeScript", "React", "Next.js", "Tailwind CSS", "Git"],
+      "experience_level": "junior",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "intern_swe_datadog",
+    "source": "University Job Board",
+    "raw_text": "Datadog | Software Engineering Intern (Summer 2026) | Boston, MA | On-site | $55/hr\n\nDatadog is seeking undergraduate students graduating in 2027 for our 12-week Summer Software Engineering Internship. You will work alongside senior engineers on our core observability platform.\nPreferred qualifications:\n- Enrolled in BS in Computer Science or related degree\n- Hands-on coursework or projects with Java, Go, or Python\n- Understanding of algorithms, data structures, and relational databases.",
+    "expected": {
+      "title": "Software Engineering Intern",
+      "company": "Datadog",
+      "location": "Boston, MA",
+      "remote_ok": false,
+      "stipend": "$55/hr",
+      "required_skills": ["Java", "Go", "Python", "Algorithms", "Data Structures"],
+      "experience_level": "intern",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "negative_forum_chatter",
+    "source": "Community Forum",
+    "raw_text": "Hey everyone! Does anyone know when the next YC batch application opens? Also, if you're attending PyCon next month let me know, would love to meet up for coffee and discuss open source AI agents.",
+    "expected": {
+      "title": null,
+      "company": null,
+      "location": null,
+      "remote_ok": false,
+      "stipend": null,
+      "required_skills": [],
+      "experience_level": null,
+      "deadline": null,
+      "is_job_listing": false
+    }
+  },
+  {
+    "id": "candidate_seeking_work",
+    "source": "Hacker News (Seeking Work Thread)",
+    "raw_text": "SEEKING WORK | Senior Distributed Systems Engineer | Remote | I have 11 years of experience building resilient microservices in Go, Rust, and Kafka. Previously Principal Engineer at Cloudflare and Senior SWE at Google. Looking for 3-6 month contract or high-impact full-time roles. Portfolio: https://github.com/example. Contact: alex@distributed.dev",
+    "expected": {
+      "title": null,
+      "company": null,
+      "location": null,
+      "remote_ok": false,
+      "stipend": null,
+      "required_skills": [],
+      "experience_level": null,
+      "deadline": null,
+      "is_job_listing": false
+    }
+  },
+  {
+    "id": "scif_strict_onsite_no_remote",
+    "source": "Defense Tech Job Board",
+    "raw_text": "Palantir Technologies — Deployment Strategist\nLocation: Washington, DC (On-site 5 days/week in SCIF)\nSalary: $140,000 - $185,000 + clearance bonus\n\nNotice: We are strictly NOT a remote-friendly position for this defense project. All work is conducted on-site in air-gapped SCIF facilities. Do NOT apply if you need remote, hybrid, or telework flexibility. TS/SCI clearance required.\nTech stack: Python, Bash, Kubernetes, Linux kernel internals, AWS GovCloud.",
+    "expected": {
+      "title": "Deployment Strategist",
+      "company": "Palantir Technologies",
+      "location": "Washington, DC",
+      "remote_ok": false,
+      "stipend": "$140,000 - $185,000",
+      "required_skills": ["Python", "Bash", "Kubernetes", "Linux", "AWS GovCloud"],
+      "experience_level": "mid",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "recruitment_agency_stealth_client",
+    "source": "Executive Recruiting Agency",
+    "raw_text": "Apex Talent Partners | Principal Security Architect | London, UK | £140,000 - £175,000 base + equity\n\nApex Talent Partners is exclusively retained by a stealth Series B autonomous vehicle startup to hire their founding Principal Security Architect. You will report to the VP of Engineering.\nCore responsibilities:\n- Embedded firmware security & automotive CAN bus hardening\n- SOC2 Type II and ISO 26262 compliance\nRequirements:\n- Extensive experience in C, C++, Rust, eBPF, Linux hardware security modules (HSM)\nDirect inquiries to: security-team@apextalent.co.uk",
+    "expected": {
+      "title": "Principal Security Architect",
+      "company": "Apex Talent Partners",
+      "location": "London, UK",
+      "remote_ok": false,
+      "stipend": "£140,000 - £175,000",
+      "required_skills": ["C", "C++", "Rust", "eBPF", "Linux", "HSM"],
+      "experience_level": "lead",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  },
+  {
+    "id": "contract_day_rate_multi_position",
+    "source": "Fintech Direct",
+    "raw_text": "Monzo Bank is growing! We are currently hiring across our core banking division:\nPrimary Need: Senior Platform Reliability Engineer (SRE)\nSecondary Needs: Junior Product Designer & Risk Analyst.\n\nFor the Senior SRE role:\n- Location: Remote (UK only)\n- Compensation: Contract £650 - £750 / day (Inside IR35)\n- Duration: Initial 6 months with likely extension\n- Tech: Go, Kubernetes, Terraform, AWS, Prometheus, Envoy, CockroachDB\nMust have prior experience operating multi-region Kubernetes clusters in production.",
+    "expected": {
+      "title": "Senior Platform Reliability Engineer",
+      "company": "Monzo Bank",
+      "location": "UK",
+      "remote_ok": true,
+      "stipend": "£650 - £750 / day",
+      "required_skills": ["Go", "Kubernetes", "Terraform", "AWS", "Prometheus", "Envoy", "CockroachDB"],
+      "experience_level": "senior",
+      "deadline": null,
+      "is_job_listing": true
+    }
+  }
+]

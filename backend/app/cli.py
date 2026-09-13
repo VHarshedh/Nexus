@@ -221,6 +221,23 @@ def search(resume_text: str, top_k: int, hybrid: bool) -> None:
     asyncio.run(_search())
 
 
+# ─── Eval Command ────────────────────────────────────────────────────────────
+@cli.command("eval-extraction")
+@click.option(
+    "--mock",
+    is_flag=True,
+    default=False,
+    help="Run in deterministic offline mock mode (skips Gemini API calls).",
+)
+def eval_extraction_cmd(mock: bool) -> None:
+    """Evaluate LLM extraction accuracy against hand-labelled ground truth benchmark."""
+    from evals.eval_extraction import run_evaluation
+
+    accuracy, _ = asyncio.run(run_evaluation(mock_mode=mock))
+    if accuracy < 0.80:
+        sys.exit(1)
+
+
 # ─── Entry Point ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     cli()
