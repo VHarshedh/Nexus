@@ -16,6 +16,7 @@ Every query filters by ``user_id == current_user.id``.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -173,13 +174,23 @@ async def refresh_user_matches(
     if not similar:
         return []
 
-    # -- Generate LLM justifications in bulk ----------------------------------
+    # -- Generate LLM justifications in batch (1 API call instead of 20) ------
     settings = get_settings()
     client = genai.Client(api_key=settings.gemini_api_key)
     matches_out: list[MatchResponse] = []
 
+    # Filter listings that need new justifications (new matches or fallback text)
+    listings_list = [listing for listing, _ in similar]
+    justifications_map = await _generate_batch_justifications(
+        client, resume.raw_text, listings_list
+    )
+
     for listing, distance in similar:
         score = max(0.0, 1.0 - distance)
+        generated_justification = (
+            justifications_map.get(str(listing.id))
+            or f"Strong alignment with candidate profile for {listing.title or 'this role'}."
+        )
 
         # Upsert UserListingMatch (avoid duplicates on re-run)
         existing = await session.execute(
@@ -191,24 +202,20 @@ async def refresh_user_matches(
         match_row = existing.scalar_one_or_none()
 
         if match_row is None:
-            justification = await _generate_justification(
-                client, resume.raw_text, listing
-            )
             match_row = UserListingMatch(
                 user_id=user_id,
                 listing_id=listing.id,
                 match_score=round(score, 4),
-                justification=justification,
+                justification=generated_justification,
                 saved=False,
                 status="pending",
             )
             session.add(match_row)
         else:
             match_row.match_score = round(score, 4)
-            if not match_row.justification:
-                match_row.justification = await _generate_justification(
-                    client, resume.raw_text, listing
-                )
+            # Update justification if previously missing or was a fallback
+            if not match_row.justification or match_row.justification.startswith("Match based on"):
+                match_row.justification = generated_justification
 
         await session.flush()
 
@@ -258,13 +265,66 @@ async def compute_matches(
     return MatchComputeResponse(computed=len(matches_out), matches=matches_out)
 
 
+async def _generate_batch_justifications(
+    client: genai.Client,
+    resume_text: str,
+    listings: list[JobListing],
+) -> dict[str, str]:
+    """Generate concise 1-line match justifications for multiple listings in a single Gemini request.
+
+    Batching avoids hitting the Gemini Free Tier 15 RPM rate limit when computing top_k matches.
+    """
+    if not listings:
+        return {}
+
+    resume_snippet = resume_text[:1200]
+    jobs_summary = []
+    for l in listings:
+        jobs_summary.append({
+            "id": str(l.id),
+            "title": l.title or "Role",
+            "company": l.company or "Company",
+            "skills": l.required_skills or [],
+            "location": l.location or "Unspecified",
+            "remote": l.remote_ok,
+        })
+
+    prompt = (
+        "You are an expert career intelligence AI. Given a candidate's resume snippet and a list "
+        "of matched job openings, provide exactly ONE concise sentence (max 25 words) for each job "
+        "explaining why it is a strong match based on their skills and background.\n\n"
+        f"RESUME SNIPPET:\n{resume_snippet}\n\n"
+        f"JOB LISTINGS (JSON):\n{json.dumps(jobs_summary, indent=2)}\n\n"
+        "Return ONLY a JSON object mapping each job's 'id' to its 1-sentence justification string.\n"
+        'Example format: {"<id>": "Strong match based on candidate\'s Python and cloud API skills.", ...}'
+    )
+
+    try:
+        response = await client.aio.models.generate_content(
+            model="gemini-3.5-flash-lite",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=2048,
+                response_mime_type="application/json",
+            ),
+        )
+        if response.text:
+            data = json.loads(response.text)
+            if isinstance(data, dict):
+                return {str(k): str(v).strip() for k, v in data.items()}
+    except Exception as exc:
+        logger.warning("[matching] Batch justification generation failed: %s", exc)
+
+    return {}
+
+
 async def _generate_justification(
     client: genai.Client,
     resume_text: str,
     listing: JobListing,
 ) -> str:
     """Call Gemini to generate a concise 1-line match justification."""
-    # Use only a snippet of the resume to stay within token budget
     resume_snippet = resume_text[:1500]
     prompt = (
         "You are a career matching assistant. Given the candidate's resume snippet "
