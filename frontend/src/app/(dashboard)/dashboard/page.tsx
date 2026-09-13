@@ -5,7 +5,7 @@ import { useDropzone } from 'react-dropzone';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import type { ResumeResponse, MatchResponse, MatchComputeResponse } from '@/types/api';
-import { cn, formatDate, formatMatchScore } from '@/lib/utils';
+import { cn, formatDate, formatMatchScore, matchesMinStipend } from '@/lib/utils';
 import { MAX_RESUME_FILE_BYTES, validateResumeFile } from '@/lib/resume-file';
 import { MatchCard } from '@/components/match-card';
 import toast from 'react-hot-toast';
@@ -340,13 +340,12 @@ export default function DashboardPage() {
           return false;
         }
 
-        // 4. Stipend / Compensation Filter
+        // 4. Stipend / Compensation Filter (greater than amount searched with currency conversion)
         if (onlyWithStipend && !listing.stipend?.trim()) {
           return false;
         }
         if (stipendFilter.trim()) {
-          const st = (listing.stipend || '').toLowerCase();
-          if (!st.includes(stipendFilter.trim().toLowerCase())) {
+          if (!matchesMinStipend(listing.stipend, stipendFilter)) {
             return false;
           }
         }
@@ -539,12 +538,12 @@ export default function DashboardPage() {
               <div>
                 <label className="block text-xs font-medium text-nexus-text-dim mb-1.5 flex items-center gap-1">
                   <DollarSign size={13} className="text-nexus-text-muted" />
-                  Stipend / Salary
+                  Min Stipend (≥)
                 </label>
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="e.g. $100k, €60k, /mo..."
+                    placeholder="e.g. > $800, 80000 rupees, 100k..."
                     value={stipendFilter}
                     onChange={(e) => setStipendFilter(e.target.value)}
                     className="nexus-input w-full text-xs py-2 pr-7"
