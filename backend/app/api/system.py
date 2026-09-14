@@ -16,8 +16,11 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
+
+from app.config import get_settings
+from app.services.scheduler import run_scheduled_pipeline
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1405,3 +1408,85 @@ async def live_command_center(db: AsyncSession = Depends(get_db)) -> HTMLRespons
 </html>
 """
     return HTMLResponse(content=html_content)
+
+
+def _verify_cron_token(
+    token_query: str | None,
+    auth_header: str | None,
+    x_cron_secret: str | None,
+    expected_secret: str,
+) -> None:
+    """Validate that the caller provided the correct CRON_SECRET token."""
+    if not expected_secret:
+        return
+
+    provided: str | None = None
+    if x_cron_secret:
+        provided = x_cron_secret.strip()
+    elif token_query:
+        provided = token_query.strip()
+    elif auth_header:
+        parts = auth_header.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            provided = parts[1]
+        else:
+            provided = auth_header.strip()
+
+    if not provided or provided != expected_secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Invalid or missing cron secret token",
+        )
+
+
+@router.api_route(
+    "/api/system/cron-run",
+    methods=["GET", "POST"],
+    summary="Trigger Scheduled Ingestion & Match Refresh Pipeline",
+    description=(
+        "Triggers the scheduled automated pipeline (takedown check, re-scraping, "
+        "and candidate match refresh). Suitable for cron-job.org, Cloud Scheduler, "
+        "or external cron triggers. Runs as an async background task by default."
+    ),
+)
+async def trigger_cron_run(
+    background_tasks: BackgroundTasks,
+    token: str | None = Query(default=None, description="Secret token if provided as query param"),
+    authorization: str | None = Header(default=None, description="Bearer token authorization header"),
+    x_cron_secret: str | None = Header(default=None, alias="X-Cron-Secret", description="Custom header for cron secret"),
+    sync: bool = Query(default=False, description="Whether to wait synchronously for the pipeline to finish"),
+    scrape: bool = Query(default=True, description="Whether to execute job board scrapers"),
+    health_check: bool = Query(default=True, description="Whether to verify active saved listings"),
+    match_refresh: bool = Query(default=True, description="Whether to refresh match scores for verified candidates"),
+    skip_embeddings: bool = Query(default=False, description="Skip embedding generation"),
+) -> dict[str, Any]:
+    """Execute the automated scheduled pipeline with optional token authentication."""
+    settings = get_settings()
+    _verify_cron_token(token, authorization, x_cron_secret, settings.cron_secret)
+
+    if sync:
+        report = await run_scheduled_pipeline(
+            run_scraper=scrape,
+            run_health_check=health_check,
+            run_match_refresh=match_refresh,
+            skip_embeddings=skip_embeddings,
+        )
+        return {
+            "status": "completed",
+            "message": "Scheduled pipeline executed synchronously.",
+            "report": report,
+        }
+
+    background_tasks.add_task(
+        run_scheduled_pipeline,
+        run_scraper=scrape,
+        run_health_check=health_check,
+        run_match_refresh=match_refresh,
+        skip_embeddings=skip_embeddings,
+    )
+    return {
+        "status": "accepted",
+        "message": "Scheduled pipeline initiated in background task.",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+

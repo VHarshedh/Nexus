@@ -247,3 +247,40 @@ async def test_run_scheduled_pipeline_orchestrates_phases(monkeypatch):
     assert report["health_check"]["taken_down"] == 1
     assert report["scraper"]["new"] == 5
     assert report["match_refresh"]["users_refreshed"] == 3
+
+
+@pytest.mark.asyncio
+async def test_cron_endpoint_auth_and_execution(monkeypatch):
+    """Verify that /api/system/cron-run respects secret token authentication and triggers pipeline."""
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "cron_secret", "secret123")
+
+    called = []
+    async def mock_pipeline(**_kwargs):
+        called.append(True)
+        return {"status": "ok"}
+
+    monkeypatch.setattr("app.api.system.run_scheduled_pipeline", mock_pipeline)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Unauthorized without token
+        unauth_resp = await ac.post("/api/system/cron-run")
+        assert unauth_resp.status_code == 401
+
+        # Authorized via query param
+        auth_query_resp = await ac.get("/api/system/cron-run?token=secret123")
+        assert auth_query_resp.status_code == 200
+        assert auth_query_resp.json()["status"] == "accepted"
+
+        # Authorized via header
+        auth_hdr_resp = await ac.post(
+            "/api/system/cron-run",
+            headers={"X-Cron-Secret": "secret123"},
+        )
+        assert auth_hdr_resp.status_code == 200
+

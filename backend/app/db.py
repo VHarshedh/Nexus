@@ -40,11 +40,18 @@ def _get_engine() -> AsyncEngine:
             raise RuntimeError(
                 "DATABASE_URL is not set. Please define it in your .env file."
             )
+        db_url = settings.database_url.strip().strip('"\'')
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         _engine = create_async_engine(
-            settings.database_url,
+            db_url,
             echo=settings.log_level == "DEBUG",
             pool_size=5,
             max_overflow=10,
+            connect_args={
+                "statement_cache_size": 0,
+                "prepared_statement_cache_size": 0,
+            },
         )
     return _engine
 

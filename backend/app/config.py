@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     scrape_delay_min: float = 2.0
     scrape_delay_max: float = 5.0
 
+    # -- Scheduled Cron Security Token ----------------------------------------
+    # If set, calls to /api/system/cron-run must provide this secret token
+    cron_secret: str = ""
+
     # -- Logging level (DEBUG | INFO | WARNING | ERROR) -----------------------
     log_level: str = "INFO"
 
