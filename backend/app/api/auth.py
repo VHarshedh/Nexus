@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -30,7 +32,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
+    GoogleAuthRequest,
     LoginRequest,
     MessageResponse,
     RegisterRequest,
@@ -40,7 +44,6 @@ from app.api.schemas import (
     VerifyEmailRequest,
     UserPreferencesUpdateRequest,
     UserProfileResponse,
-    ChangePasswordRequest,
 )
 from app.config import get_settings
 from app.db import get_db_session
@@ -172,13 +175,93 @@ async def get_current_user(
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+@router.post("/google", response_model=TokenResponse)
+async def google_auth(
+    body: GoogleAuthRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> TokenResponse:
+    """Authenticate or register a user with a Google OAuth ID token."""
+    settings = get_settings()
+
+    # 1. Verify token with Google's tokeninfo API
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": body.credential},
+            )
+    except Exception as exc:
+        logger.error("Failed to connect to Google OAuth service: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to reach Google authentication service. Please try again.",
+        )
+
+    if resp.status_code != 200:
+        logger.warning("Google token validation failed (status %s): %s", resp.status_code, resp.text)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired Google authentication credential.",
+        )
+
+    data = resp.json()
+    email = data.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google account did not provide an email address.",
+        )
+
+    # Validate audience matches client id if configured
+    expected_aud = settings.google_client_id.strip() if settings.google_client_id else ""
+    token_aud = data.get("aud")
+    if expected_aud and token_aud != expected_aud:
+        logger.warning("Google OAuth aud mismatch: expected %s, got %s", expected_aud, token_aud)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google OAuth client identification.",
+        )
+
+    # 2. Check if user already exists
+    result = await session.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        random_pass = secrets.token_urlsafe(32)
+        user = User(
+            email=email,
+            hashed_password=hash_password(random_pass),
+            is_verified=True,
+            onboarded=False,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        logger.info("New user registered via Google OAuth: %s", user.email)
+    else:
+        if not user.is_verified:
+            user.is_verified = True
+            await session.commit()
+            await session.refresh(user)
+        logger.info("Existing user logged in via Google OAuth: %s", user.email)
+
+    token = create_access_token(user.id, user.email)
+
+    return TokenResponse(
+        access_token=token,
+        user_id=str(user.id),
+        email=user.email,
+        is_verified=True,
+        onboarded=user.onboarded,
+    )
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
-    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session),
 ) -> TokenResponse:
-    """Create a new user account, send confirmation email via Gmail SMTP, and return JWT."""
+    """Create a new user account with instant activation (no email verification required)."""
     existing = await session.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -189,25 +272,20 @@ async def register(
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
-        is_verified=False,
+        is_verified=True,
     )
     session.add(user)
     await session.commit()
     await session.refresh(user)
 
-    settings = get_settings()
-    verify_token = create_email_verification_token(user.id, user.email)
-    verify_url = f"{settings.frontend_url}/verify-email?token={verify_token}"
-    background_tasks.add_task(send_verification_email, user.email, verify_url)
-
     token = create_access_token(user.id, user.email)
-    logger.info("User registered (unverified): %s", user.email)
+    logger.info("User registered directly: %s", user.email)
 
     return TokenResponse(
         access_token=token,
         user_id=str(user.id),
         email=user.email,
-        is_verified=False,
+        is_verified=True,
         onboarded=user.onboarded,
     )
 
@@ -228,10 +306,9 @@ async def login(
         )
 
     if not user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email address before signing in.",
-        )
+        user.is_verified = True
+        await session.commit()
+        await session.refresh(user)
 
     token = create_access_token(user.id, user.email)
     logger.info("User logged in: %s", user.email)

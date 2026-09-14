@@ -1,71 +1,109 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import Script from 'next/script';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import api from '@/lib/api';
-import { AlertCircle, Brain, Check, Eye, EyeOff, Loader2, Mail, Sparkles } from 'lucide-react';
+import { AlertCircle, Brain, Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AxiosError } from 'axios';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, login, register } = useAuth();
+  const { user, login, register, loginWithGoogle } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
-  const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [forgotSent, setForgotSent] = useState(false);
-  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [googleInitialized, setGoogleInitialized] = useState(false);
 
-  // Live password complexity checks
-  const hasLetter = /[a-zA-Z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
-  const hasSymbol = /[^a-zA-Z0-9\s]/.test(password);
-  const isComplex = hasLetter && hasNumber && hasSymbol;
+  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '';
 
   // Auto-redirect if already authenticated
-  React.useEffect(() => {
+  useEffect(() => {
     if (user) {
       router.push('/dashboard');
     }
   }, [user, router]);
 
+  // Handle response from Google OAuth popup
+  const handleGoogleCredentialResponse = useCallback(
+    async (response: { credential?: string }) => {
+      if (!response.credential) return;
+      setLoading(true);
+      setErrorMessage(null);
+      try {
+        await loginWithGoogle(response.credential);
+        toast.success('Welcome to NEXUS!');
+        window.location.href = '/dashboard';
+      } catch (err) {
+        const axiosErr = err as AxiosError<{ detail?: string }>;
+        const msg = axiosErr.response?.data?.detail || 'Google sign-in failed. Please try again.';
+        setErrorMessage(msg);
+        toast.error(msg);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loginWithGoogle]
+  );
+
+  // Initialize Google Identity Services button
+  const initializeGoogleBtn = useCallback(() => {
+    if (!googleClientId) return;
+    if (typeof window === 'undefined' || !window.google?.accounts?.id) return;
+
+    try {
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: handleGoogleCredentialResponse,
+      });
+
+      const container = document.getElementById('google-btn-container');
+      if (container) {
+        container.innerHTML = '';
+        window.google.accounts.id.renderButton(container, {
+          theme: 'filled_black',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'pill',
+          width: 360,
+          logo_alignment: 'left',
+        });
+        setGoogleInitialized(true);
+      }
+    } catch (err) {
+      console.error('Failed to initialize Google Sign-In:', err);
+    }
+  }, [googleClientId, handleGoogleCredentialResponse]);
+
+  // Attempt button rendering when window is available or script has loaded
+  useEffect(() => {
+    if (googleClientId && window.google?.accounts?.id) {
+      initializeGoogleBtn();
+    }
+  }, [googleClientId, initializeGoogleBtn]);
+
+  // Email & Password Fallback submit handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMessage(null);
+
     try {
-      if (isForgotPassword) {
-        await api.post('/api/auth/forgot-password', { email });
-        setForgotSent(true);
-        toast.success('Password reset email dispatched!');
-      } else if (isRegister) {
+      if (isRegister) {
         if (password !== confirmPassword) {
           setErrorMessage('Passwords do not match.');
           setLoading(false);
           return;
         }
-        if (!isComplex) {
-          setErrorMessage('Password must include letters, numbers, and at least one symbol (e.g. !@#$%^&*).');
-          setLoading(false);
-          return;
-        }
-        const res = await register({ email, password });
-        if (!res.is_verified) {
-          setRegisteredEmail(email);
-          setPassword('');
-          toast.success('Account created! Please verify your email.');
-        } else {
-          toast.success('Account created!');
-          window.location.href = '/dashboard';
-        }
+        await register({ email, password });
+        toast.success('Account created! Welcome to NEXUS.');
+        window.location.href = '/dashboard';
       } else {
         await login({ email, password });
         toast.success('Welcome back!');
@@ -95,347 +133,193 @@ export default function LoginPage() {
     }
   };
 
-  const handleResendVerification = async () => {
-    const targetEmail = email || registeredEmail;
-    if (!targetEmail) {
-      toast.error('Please enter your email address.');
-      return;
-    }
-    setResending(true);
-    try {
-      await api.post('/api/auth/resend-verification', { email: targetEmail });
-      toast.success('Verification email sent! Check your inbox.');
-    } catch {
-      toast.error('Failed to resend verification email.');
-    } finally {
-      setResending(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-nexus-bg relative overflow-hidden">
-      {/* Background decorations */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-nexus-accent/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl" />
+      {/* Load Google Identity Services SDK */}
+      <Script
+        src="https://accounts.google.com/gsi/client"
+        strategy="afterInteractive"
+        onLoad={initializeGoogleBtn}
+      />
+
+      {/* Ambient background decorations */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-nexus-accent/15 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/15 rounded-full blur-3xl" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-nexus-accent/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative z-10 w-full max-w-md px-6">
-        {/* Logo */}
+      <div className="relative z-10 w-full max-w-md px-6 py-12">
+        {/* Logo & Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-nexus-accent/20 rounded-2xl mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-nexus-accent/20 rounded-2xl mb-4 shadow-lg shadow-nexus-accent/10">
             <Brain className="w-8 h-8 text-nexus-accent" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">NEXUS</h1>
-          <p className="text-nexus-text-muted mt-1">Autonomous Career Intelligence</p>
+          <p className="text-nexus-text-muted mt-1 text-sm">Autonomous Career Intelligence</p>
         </div>
 
         {/* Card */}
-        <div className="nexus-card">
-          {/* Dedicated State: Registered Email Verification Screen */}
-          {registeredEmail ? (
-            <div className="text-center py-4 space-y-5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="w-16 h-16 bg-violet-500/20 text-violet-400 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-                <Mail size={32} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">Check Your Inbox</h2>
-                <p className="text-sm text-nexus-text-muted mt-2 leading-relaxed">
-                  We sent a confirmation link to <strong className="text-white">{registeredEmail}</strong>.
-                  Please click the link in your email to activate your account before signing in.
-                </p>
-              </div>
+        <div className="nexus-card shadow-2xl backdrop-blur-md">
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="flex items-start gap-3 p-3.5 mb-5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm animate-in fade-in duration-200">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-400 mt-0.5" />
+              <p className="flex-1 leading-snug">{errorMessage}</p>
+            </div>
+          )}
 
-              <div className="p-3.5 rounded-xl bg-nexus-surface/80 border border-nexus-border text-xs text-nexus-text-muted text-left space-y-1">
-                <p>&bull; Verification links remain valid for 24 hours.</p>
-                <p>&bull; Can't find the email? Please check your spam or junk folder.</p>
-              </div>
+          {/* PRIMARY: Google Sign-In */}
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-nexus-text-muted text-center">
+              Quick Sign In
+            </label>
 
-              <div className="space-y-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleResendVerification}
-                  disabled={resending}
-                  className="nexus-btn-ghost w-full justify-center text-xs py-2"
-                >
-                  {resending ? 'Resending verification email…' : 'Resend Verification Email'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRegisteredEmail(null);
-                    setIsRegister(false);
-                    setErrorMessage(null);
+            <div className="flex flex-col items-center justify-center min-h-[46px]">
+              {/* Google Button Container (Populated by Google's GSI) */}
+              <div id="google-btn-container" className="flex justify-center w-full" />
+
+              {/* Fallback button if Client ID isn't set yet */}
+              {!googleClientId && (
+                <div className="w-full text-center p-3 rounded-xl bg-nexus-surface-2/60 border border-nexus-border text-xs text-nexus-text-dim">
+                  Add <code className="text-nexus-accent font-mono">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> in <code className="font-mono">.env.local</code> to enable 1-click Google Sign-In.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="relative my-6 text-center">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-nexus-border/60" />
+            </div>
+            <span className="relative bg-nexus-surface px-3 text-[11px] text-nexus-text-dim uppercase tracking-wider font-semibold">
+              Or with email
+            </span>
+          </div>
+
+          {/* Toggle: Sign In vs Create Account */}
+          <div className="flex bg-nexus-surface-2 rounded-lg p-1 mb-5">
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegister(false);
+                setErrorMessage(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
+                !isRegister
+                  ? 'bg-nexus-accent text-white shadow-sm'
+                  : 'text-nexus-text-muted hover:text-nexus-text'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegister(true);
+                setErrorMessage(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
+                isRegister
+                  ? 'bg-nexus-accent text-white shadow-sm'
+                  : 'text-nexus-text-muted hover:text-nexus-text'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {/* Fallback Email & Password Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-nexus-text-muted mb-1.5">
+                Email Address
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errorMessage) setErrorMessage(null);
+                }}
+                className="nexus-input text-sm"
+                placeholder="you@example.com"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-nexus-text-muted mb-1.5">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMessage) setErrorMessage(null);
                   }}
-                  className="nexus-btn-primary w-full justify-center text-xs py-2.5"
+                  className="nexus-input pr-10 text-sm"
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-nexus-text-dim hover:text-nexus-text"
                 >
-                  Return to Sign In
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
-          ) : (
-            <>
-              {/* Toggle (hidden when in forgot-password mode) */}
-              {!isForgotPassword && (
-                <div className="flex bg-nexus-surface-2 rounded-lg p-1 mb-6">
+
+            {isRegister && (
+              <div>
+                <label className="block text-xs font-medium text-nexus-text-muted mb-1.5">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    className="nexus-input pr-10 text-sm"
+                    placeholder="••••••••"
+                    required
+                  />
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsRegister(false);
-                      setErrorMessage(null);
-                      setRegisteredEmail(null);
-                    }}
-                    className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
-                      !isRegister
-                        ? 'bg-nexus-accent text-white shadow-sm'
-                        : 'text-nexus-text-muted hover:text-nexus-text'
-                    }`}
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-nexus-text-dim hover:text-nexus-text"
                   >
-                    Sign In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsRegister(true);
-                      setErrorMessage(null);
-                      setRegisteredEmail(null);
-                    }}
-                    className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${
-                      isRegister
-                        ? 'bg-nexus-accent text-white shadow-sm'
-                        : 'text-nexus-text-muted hover:text-nexus-text'
-                    }`}
-                  >
-                    Create Account
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* Inline Error Banner */}
-              {errorMessage && (
-                <div className="flex items-start gap-3 p-3.5 mb-5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm animate-in fade-in duration-200">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-400 mt-0.5" />
-                  <div className="flex-1 leading-snug">
-                    <p className="font-semibold">{errorMessage}</p>
-                    {errorMessage.toLowerCase().includes('verify') && (
-                      <div className="mt-2">
-                        <p className="text-xs text-red-400/80">
-                          Your account requires email verification.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handleResendVerification}
-                          disabled={resending}
-                          className="mt-1 text-xs font-semibold text-nexus-accent hover:underline disabled:opacity-50"
-                        >
-                          {resending ? 'Resending…' : 'Click here to resend verification email'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Forgot Password View */}
-              {isForgotPassword ? (
-                <div className="space-y-4">
-                  <div className="text-center mb-2">
-                    <h2 className="text-lg font-semibold text-white">Reset Password</h2>
-                    <p className="text-xs text-nexus-text-muted mt-1">
-                      Enter your email address and we will send a secure reset link valid for <strong>10 minutes</strong>.
-                    </p>
-                  </div>
-
-                  {forgotSent ? (
-                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm space-y-3">
-                      <p className="font-semibold text-emerald-400">Reset instructions dispatched</p>
-                      <p className="text-xs text-emerald-300/80 leading-relaxed">
-                        If an account exists for <strong className="text-white">{email}</strong>, a password reset email has been sent. The link expires in <strong>10 minutes</strong>.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsForgotPassword(false);
-                          setForgotSent(false);
-                        }}
-                        className="nexus-btn-ghost w-full justify-center text-xs"
-                      >
-                        Back to Sign In
-                      </button>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-nexus-text-muted mb-1.5">
-                          Your Registered Email
-                        </label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => {
-                            setEmail(e.target.value);
-                            if (errorMessage) setErrorMessage(null);
-                          }}
-                          className="nexus-input"
-                          placeholder="you@example.com"
-                          required
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="nexus-btn-primary w-full justify-center"
-                      >
-                        {loading ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Sparkles className="w-4 h-4" />
-                        )}
-                        Send Reset Link
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsForgotPassword(false);
-                          setErrorMessage(null);
-                        }}
-                        className="nexus-btn-ghost w-full justify-center text-xs"
-                      >
-                        Back to Sign In
-                      </button>
-                    </form>
-                  )}
-                </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="nexus-btn-primary w-full justify-center text-sm py-2.5 mt-2"
+            >
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                /* Sign In / Register Form */
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-nexus-text-muted mb-1.5">
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => {
-                        setEmail(e.target.value);
-                        if (errorMessage) setErrorMessage(null);
-                      }}
-                      className="nexus-input"
-                      placeholder="you@example.com"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-sm font-medium text-nexus-text-muted">
-                        Password
-                      </label>
-                      {!isRegister && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsForgotPassword(true);
-                            setErrorMessage(null);
-                          }}
-                          className="text-xs text-nexus-accent hover:underline"
-                        >
-                          Forgot password?
-                        </button>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(e) => {
-                          setPassword(e.target.value);
-                          if (errorMessage) setErrorMessage(null);
-                        }}
-                        className="nexus-input pr-10"
-                        placeholder={isRegister ? 'Letters, numbers & symbol' : '••••••••'}
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-nexus-text-dim hover:text-nexus-text"
-                      >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-
-                    {isRegister && (
-                      <div className="mt-4">
-                        <label className="text-sm font-medium text-nexus-text-muted mb-1.5 block">
-                          Confirm Password
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showConfirmPassword ? 'text' : 'password'}
-                            value={confirmPassword}
-                            onChange={(e) => {
-                              setConfirmPassword(e.target.value);
-                              if (errorMessage) setErrorMessage(null);
-                            }}
-                            className="nexus-input pr-10"
-                            placeholder="Confirm your password"
-                            required
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-nexus-text-dim hover:text-nexus-text"
-                          >
-                            {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {isRegister && (
-                      <div className="p-2.5 mt-2 rounded-xl bg-nexus-surface/60 border border-nexus-border space-y-1 text-[11px]">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${hasLetter ? 'bg-emerald-500/20 text-emerald-400' : 'bg-nexus-surface text-nexus-text-dim'}`}>
-                            {hasLetter ? <Check size={9} /> : '•'}
-                          </div>
-                          <span className={hasLetter ? 'text-emerald-400' : 'text-nexus-text-dim'}>At least one letter</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${hasNumber ? 'bg-emerald-500/20 text-emerald-400' : 'bg-nexus-surface text-nexus-text-dim'}`}>
-                            {hasNumber ? <Check size={9} /> : '•'}
-                          </div>
-                          <span className={hasNumber ? 'text-emerald-400' : 'text-nexus-text-dim'}>At least one number</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] ${hasSymbol ? 'bg-emerald-500/20 text-emerald-400' : 'bg-nexus-surface text-nexus-text-dim'}`}>
-                            {hasSymbol ? <Check size={9} /> : '•'}
-                          </div>
-                          <span className={hasSymbol ? 'text-emerald-400' : 'text-nexus-text-dim'}>At least one symbol (e.g. !@#$%^&*)</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <button type="submit" disabled={loading} className="nexus-btn-primary w-full justify-center">
-                    {loading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" />
-                    )}
-                    {isRegister ? 'Create Account' : 'Sign In'}
-                  </button>
-                </form>
+                <Sparkles className="w-4 h-4" />
               )}
-            </>
-          )}
+              {isRegister ? 'Register & Sign In' : 'Sign In with Email'}
+            </button>
+          </form>
         </div>
 
         <p className="text-center text-nexus-text-dim text-xs mt-6">
-          Powered by Gemini AI &bull; pgvector Semantic Search
+          NEXUS Career Intelligence &bull; Powered by Gemini AI
         </p>
       </div>
     </div>

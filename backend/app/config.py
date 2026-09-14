@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # If set, calls to /api/system/cron-run must provide this secret token
     cron_secret: str = ""
 
+    # -- Google OAuth 2.0 (Sign-In) -------------------------------------------
+    # Loaded directly from .env (GOOGLE_CLIENT_ID)
+    google_client_id: str = ""
+
     # -- Logging level (DEBUG | INFO | WARNING | ERROR) -----------------------
     log_level: str = "INFO"
 

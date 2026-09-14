@@ -8,6 +8,7 @@ interface AuthContextValue {
   user: AuthState | null;
   isLoading: boolean;
   login: (data: LoginRequest) => Promise<void>;
+  loginWithGoogle: (credential: string) => Promise<void>;
   register: (data: RegisterRequest) => Promise<TokenResponse>;
   logout: () => void;
   updateUser: (updates: Partial<AuthState>) => void;
@@ -30,6 +31,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   }, []);
 
+  const loginWithGoogle = useCallback(async (credential: string) => {
+    const res = await api.post<TokenResponse>('/api/auth/google', { credential });
+    const authState: AuthState = {
+      accessToken: res.data.access_token,
+      userId: res.data.user_id,
+      email: res.data.email,
+      onboarded: res.data.onboarded,
+    };
+    setAuth(authState);
+    setUser(authState);
+  }, []);
+
   const login = useCallback(async (data: LoginRequest) => {
     const res = await api.post<TokenResponse>('/api/auth/login', data);
     const authState: AuthState = {
@@ -44,16 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async (data: RegisterRequest): Promise<TokenResponse> => {
     const res = await api.post<TokenResponse>('/api/auth/register', data);
-    if (res.data.is_verified) {
-      const authState: AuthState = {
-        accessToken: res.data.access_token,
-        userId: res.data.user_id,
-        email: res.data.email,
-        onboarded: res.data.onboarded,
-      };
-      setAuth(authState);
-      setUser(authState);
-    }
+    const authState: AuthState = {
+      accessToken: res.data.access_token,
+      userId: res.data.user_id,
+      email: res.data.email,
+      onboarded: res.data.onboarded,
+    };
+    setAuth(authState);
+    setUser(authState);
     return res.data;
   }, []);
 
@@ -73,7 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, isLoading, login, loginWithGoogle, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

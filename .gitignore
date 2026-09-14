@@ -85,3 +85,6 @@ logs/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+job_listings.sql
+migrate_to_supabase.py

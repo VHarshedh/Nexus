@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -43,16 +44,22 @@ def _get_engine() -> AsyncEngine:
         db_url = settings.database_url.strip().strip('"\'')
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        _engine = create_async_engine(
-            db_url,
-            echo=settings.log_level == "DEBUG",
-            pool_size=5,
-            max_overflow=10,
-            connect_args={
+
+        is_pooler = "pooler.supabase.com" in db_url or ":6543" in db_url
+        engine_kwargs: dict[str, Any] = {
+            "echo": settings.log_level == "DEBUG",
+        }
+        if is_pooler:
+            engine_kwargs["poolclass"] = NullPool
+            engine_kwargs["connect_args"] = {
                 "statement_cache_size": 0,
                 "prepared_statement_cache_size": 0,
-            },
-        )
+            }
+        else:
+            engine_kwargs["pool_size"] = 5
+            engine_kwargs["max_overflow"] = 10
+
+        _engine = create_async_engine(db_url, **engine_kwargs)
     return _engine
 
 

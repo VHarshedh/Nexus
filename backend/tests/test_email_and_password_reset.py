@@ -123,8 +123,12 @@ def test_tampered_token_rejected():
 
 @pytest.mark.asyncio
 async def test_email_service_dispatches_or_simulates_cleanly():
-    """Verify send_verification_email and send_password_reset_email return without crashing."""
+    """Verify send_verification_email and send_password_reset_email dispatch via SMTP or fallback cleanly."""
     from unittest.mock import AsyncMock, patch
+
+    settings = get_settings()
+    settings.gmail_user = "nexus.test@gmail.com"
+    settings.gmail_app_password = "testapppassword12"
 
     with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = ({"someone@example.com": (250, "OK")}, "250 OK")

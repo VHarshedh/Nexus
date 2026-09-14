@@ -10,6 +10,25 @@ export interface LoginRequest {
   password: string;
 }
 
+/** Mirrors backend GoogleAuthRequest */
+export interface GoogleAuthRequest {
+  credential: string;
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: any) => void;
+          renderButton: (parent: HTMLElement | null, options: any) => void;
+          prompt: () => void;
+        };
+      };
+    };
+  }
+}
+
 /** Mirrors backend TokenResponse */
 export interface TokenResponse {
   access_token: string;
